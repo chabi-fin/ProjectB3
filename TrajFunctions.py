@@ -7,7 +7,7 @@ from MDAnalysis.analysis import rms, align, dihedrals, contacts, distances, \
                                 hydrogenbonds
 import pandas as pd
 
-def get_rmsd(system, reference, alignment, group, ref):
+def get_rmsd(system, reference, alignment, rmsd_group):
     """Determines the rmsd over the trajectory against a reference structure.
 
     The MDAnalysis.analysis.rms.results array is saved as a numpy array file,
@@ -21,7 +21,7 @@ def get_rmsd(system, reference, alignment, group, ref):
         The topology of the reference structure.
     alignment : MDAnalysis.core.groups.AtomGroup
         The group for the alignment, i.e. all the alpha carbons.
-    group : MDAnalysis.core.groups.AtomGroup
+    rmsd_group : MDAnalysis.core.groups.AtomGroup
         The group for the RMSD, e.g. the beta flap residues.
 
     Returns
@@ -33,7 +33,7 @@ def get_rmsd(system, reference, alignment, group, ref):
     R = rms.RMSD(system,
                  reference,  # reference universe or atomgroup
                  select=alignment,  # group to superimpose and calculate RMSD
-                 groupselections=[group])  # groups for RMSD
+                 groupselections=[rmsd_group])  # groups for RMSD
     R.run()
 
     rmsd_arr = R.results.rmsd
@@ -191,7 +191,51 @@ def get_hbonds(u, path):
 
     return hbonds, hbond_count, times
 
-def plot_rmsd(r_holo, r_apo, path):
+def plot_rmsd(rmsd, path, group="selection", ref="reference structure"):
+    """Makes a plot of the rmsd over the trajectory.
+
+    Parameters
+    ----------
+    rmsd : MDAnalysis.analysis.rms.RMSD or nparray
+        A time series of the rmsd against a known reference structure.
+    path : str
+        Path to the primary working directory.
+    group : str
+
+    Returns
+    -------
+    None.
+
+    """
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+
+    ax.plot(rmsd[:,1]/1e6, rmsd[:,2], "k-", label="all")
+    ax.plot(rmsd[:,1]/1e6, rmsd[:,3], ls=":", color="r", label=group)
+
+    # Plot settings
+    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
+                    length=5, pad=10)
+    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
+                    length=5, pad=10)
+    for i in ["top","bottom","left","right"]:
+        ax.spines[i].set_linewidth(2)
+    ax.grid(True)
+    ax.set_xlabel(r"time ($\mu$s)", labelpad=5, \
+                    fontsize=28)
+    ax.set_ylabel(r"RMSD to the {} ($\AA$)".format(ref),
+                  labelpad=5, fontsize=28)
+    plt.legend(fontsize=18)
+
+    if ref == "reference structure":
+        ref = "ref"
+    else:
+        ref = ref.replace(" ", "_")
+    plt.savefig(f"{ path }/rmsd_to_{ ref }.png")
+    plt.close()
+
+    return None
+
+def plot_rmsds(r_holo, r_apo, path):
     """Makes a plot of the rmsd against two ref structures with a color bar.
 
     Parameters
