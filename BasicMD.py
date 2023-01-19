@@ -18,55 +18,70 @@ try:
     parser.add_argument("-f", "--top_traj_file",
 						required = True,
 						dest = "file_path",
+                        type = list,
+                        metavar = "topol.top traj.xtc",
 						action = "store",
 						nargs = "+",
 						help = "Path to Structure/topology file (GROMACS TOP which "\
                         "contains topology and dihedral information) followed by "\
                         "Trajectory file(s) (GROMACS TRR, XTC) you will need to "\
-                        "output the coordinates without solvent/ions. Required.")
+                        "output the coordinates without solvent/ions, e.g. "\
+                        "\"topol.top\" \"traj.xtc\" Required.")
 
     parser.add_argument("-o","--out",
 						action = "store",
 						dest = "out_path",
+                        metavar = "project_folder/figures",
 						default = "/home/lf1071fu/project_b3/figures/holo",
 						help = "Path where the figures and output will be "\
-                        "written. Default: cwd")
+                        "written, e.g. \"project_folder/figures\".")
 
     parser.add_argument("-l", "--select_string",
 						action = "store",
 						dest = "selection_string",
 						type = str,
+                        metavar = "resid 1-10",
 						default = "all",
-						help= "Selection string such as protein or resid, "\
-                        "refer to MDAnalysis.select_atoms for more information.")
+						help= "Selection string such as protein or resid, e.g. "\
+                        "resid 1-10. Refer to MDAnalysis.select_atoms for more "\
+                        "information.")
 
     parser.add_argument("-s", "--ref_structs",
                         action = "store",
                         dest = "ref_structs",
+                        nargs = "+",
+                        metavar = "state1.pdb",
                         default = ["/home/lf1071fu/project_b3/structures/holo_state.pdb",
                                    "/home/lf1071fu/project_b3/structures/apo_state.pdb"],
-                        help = "Path to the reference structure(s) (PDB).")
+                        help = "Path to the reference structure(s), e.g. "\
+                        "state1.pdb.")
 
     parser.add_argument("-r", "--rmsd_group",
                         action = "store",
                         dest = "rmsd_group",
+                        metavar = "backbone and resid 150-175",
                         default = "backbone and (resid 198-231 or resid 743-776)",
                         help = "Selection string such as protein or resid "\
-                        "used for calculating the RMSD, refer to "\
-                        "MDAnalysis.select_atoms for more information.")
+                        "used for calculating the RMSD, e.g. \"backbone and "\
+                        "resid 150-175\". Refer to MDAnalysis.select_atoms "\
+                        "for more information.")
 
     parser.add_argument("-a", "--alignment_group",
                         action = "store",
                         dest = "alignment",
+                        metavar = "backbone",
                         default = "backbone and (resid 8-251 or resid 552-795)",
                         help = "Selection string such as protein or resid used "\
-                        "for alignment to a reference structure, refer to "\
-                        "MDAnalysis.select_atoms for more information.")
+                        "for alignment to a reference structure, e.g. "\
+                        "\"backbone\" refer to MDAnalysis.select_atoms for "\
+                        "more information.")
 
     parser.add_argument("-n", "--ref_names",
                         action = "store",
                         dest = "ref_names",
+                        metavar = "holo state",
                         #default = None,
+                        nargs = "+",
                         default = ["holo state", "apo state"],
                         help = "Name the reference structure(s) for figures "\
                         "file naming, e.g. \"holo state\", \"apo state\"")
