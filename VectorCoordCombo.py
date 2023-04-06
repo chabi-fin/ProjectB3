@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import MDAnalysis as mda
 import TrajFunctions as tf
 from MDAnalysis.analysis import align
-
-global home_path, struct_path, holo_state, apo_state
+import pandas as pd
 
 def main(argv):
 
@@ -30,16 +29,29 @@ def main(argv):
                             dest = "recalc",
                             default = False,
                             help = """Chose whether the trajectory arrays should  be recomputed.""")
+        parser.add_argument("-p", "--plot_coord",
+    						action = "store_true",
+    						dest = "plot_coord",
+    						default = False,
+    						help = "Make a plot of the reaction coordinates.")
+        parser.add_argument("-u", "--restraint_conforms",
+                            action = "store_true",
+                            dest = "restrain",
+                            default = False,
+                            help = "Extract conformations for restraints in umbrella sampling.")
         args = parser.parse_args()
 
     except argparse.ArgumentError:
     	print("Command line arguments are ill-defined, please check the arguments")
     	raise
 
+    global home_path, struct_path, holo_state, apo_state, fig_path, group, colorbar, restrain
+
     # Assign colorbar boolean from argparse
     colorbar = args.colorbar
     group = args.group
     recalc = args.recalc
+    restrain = args.restrain
 
     path = os.getcwd()
     path_head = "/home/lf1071fu/project_b3"
@@ -103,42 +115,96 @@ def main(argv):
     # Initialize a list of lists or dictionary
     dot_prods = {}
 
-    for name, traj in trajs.items():
-        
-        u = mda.Universe(top, traj, topology_format="ITP", dt=10.0)
-        align.AlignTraj(u, ref_state, select=core, in_memory=True).run()
+    df_path = f"{ path_head }/simulate/cat_trajs/dataframe_beta_vector.csv"
 
-        dot_holo = np.zeros(u.trajectory.n_frames)
-        dot_apo = np.zeros(u.trajectory.n_frames)
+    if not os.path.exists(df_path) or colorbar: 
 
-        # Iterate over traj
-        for ts in u.trajectory:
+        columns = ["traj", "ts", "doth", "dota"]
+        df = pd.DataFrame(columns=columns)
 
-            # Determine the vector between two alpha carbons
-            atom1 = u.select_atoms(f"name CA and resnum { r1 }").positions[0]
-            atom2 = u.select_atoms(f"name CA and resnum { r2 }").positions[0]
-            vec = atom2 - atom1
+        for name, traj in trajs.items():
+            
+            u = mda.Universe(top, traj, topology_format="ITP", dt=1000)
+            align.AlignTraj(u, ref_state, select=core, in_memory=True).run()
 
-            # Calculate and store the dot product against each reference
-            dot_holo[ts.frame] = np.dot(vec, vec_holo)
-            dot_apo[ts.frame] = np.dot(vec, vec_apo)
+            dot_holo = np.zeros(u.trajectory.n_frames)
+            dot_apo = np.zeros(u.trajectory.n_frames)
 
-        dot_prods[name] = np.array((dot_holo, dot_apo))
+            # Iterate over traj
+            for ts in u.trajectory:
 
+                # Determine the vector between two alpha carbons
+                atom1 = u.select_atoms(f"name CA and resnum { r1 }").positions[0]
+                atom2 = u.select_atoms(f"name CA and resnum { r2 }").positions[0]
+                vec = atom2 - atom1
+
+                # Calculate and store the dot product against each reference
+                dot_holo[ts.frame] = np.dot(vec, vec_holo)
+                dot_apo[ts.frame] = np.dot(vec, vec_apo)
+
+                new_row = {"traj" : name, "ts" : ts.frame * 1000, 
+                            "doth" : np.dot(vec, vec_holo), "dota" : np.dot(vec, vec_apo)}
+
+                # Append the new row to the DataFrame
+                df = pd.concat([df, pd.DataFrame(new_row, index=[0])])
+
+            dot_prods[name] = np.array((dot_holo, dot_apo))
+
+            df.to_csv(df_path, index=False)
+
+    else: 
+
+        df = pd.read_csv(df_path)
+
+    num_us = 10
+
+    if restrain:
+
+        restraint_pts = np.zeros((num_us,2))
+        restraint_pts[:,0] = np.linspace(210, 450, num_us)
+        restraint_pts[:,1] = [-43/40 * i + 675/2 for i in restraint_pts[:,0]]
+
+        with open(f"{ path_head }/simulate/cat_trajs/select_conforms.txt", "w") as f:
+            f.truncate()
+
+        with open(f"{ path_head }/simulate/cat_trajs/select_conforms.txt", "a") as f:
+
+            for i in range(num_us):
+
+                distances = np.sqrt(np.sum(np.square(df[['doth', 'dota']] - restraint_pts[i,:]), axis=1))
+
+                df[f"distances_{i}"] = distances
+
+                # Select the row with the minimum distance
+                n = df.loc[df[f'distances_{i}'].idxmin()]
+
+                # Print the nearest row
+                f.write(f"""Point {i+1} : (Traj : {n["traj"]}), 
+        (Time (ps) : {n["ts"]}),
+        (Dot holo : {n["doth"]}), 
+        (Dot apo : {n["dota"]}), 
+        (Distance : {n[f"distances_{i}"]})\n""")
+
+    print(df)
+
+    if plot_rxn_coord:
+        plot_rxn_coord(df, restraint_pts)
+
+def plot_rxn_coord(df, restraint_pts):
     # Plot the two products over the traj
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
     colors = ["#ff5500", "#ffcc00", "#d9ff00", "#91ff00", "#2bff00", "#00ffa2",
               "#00ffe1", "#00e5ff", "#0091ff", "#0037ff", "#EAAFCC", "#A1DEA1"]
 
-    for i, t in enumerate(trajs.keys()):
+    trajs = unique_values = df['traj'].unique().tolist()
+
+    for i, t in enumerate(trajs):
 
         if t in ["open conform", "closed conform"]:
             alpha = 1
             m = "o"
         else:
             m, alpha = (".", 0.4)
-
-        print(t, m)
 
         # Plot with or without the colorbar
         if colorbar:
@@ -159,8 +225,12 @@ def main(argv):
             cbar.outline.set_linewidth(2)
 
         else:
-            ax.scatter(dot_prods[t][0], dot_prods[t][1], label=t, alpha=1,
+            new_df = df[df["traj"] == t]
+            ax.scatter(new_df.doth, new_df.dota, label=t, alpha=1,
                        marker=m, color=colors[i], s=150)
+
+    ax.scatter(restraint_pts[:,0], restraint_pts[:,1], label="Restrain at", 
+                marker="o", color="#949494", edgecolors="#404040", s=150)
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -176,6 +246,8 @@ def main(argv):
 
     if colorbar:
         plt.savefig(f"{ fig_path }/dot_prod_{ group }_c.pdf", dpi=300)
+    elif restrain:
+        plt.savefig(f"{ fig_path }/dot_prod_points.png", dpi=300)
     else:
         plt.savefig(f"{ fig_path }/dot_prod_{ group }.pdf", dpi=300)
     plt.close()
