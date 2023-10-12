@@ -11,6 +11,12 @@ from MDAnalysis.analysis.distances import distance_array
 import pandas as pd
 
 def main(argv):
+    """Perform analysis for individual simulations.
+
+    Calculations are generally stored as npy arrays which can be combined with other 
+    simulations data in combination type analysis. The command line arguements are used to 
+    select a particular simulation from the given options. 
+    """
 
     try:
         parser = argparse.ArgumentParser()
@@ -18,164 +24,244 @@ def main(argv):
         parser.add_argument("-c", "--conform",
                             action = "store",
                             dest = "conform",
-                            default = "holo",
-                            help = """Chose a conformer for analysis. I.e. "holo" or "apo".""")
+                            default = "open",
+                            help = """Chose a conformer for analysis i.e. "open" or "closed".""")
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
                             help = """Chose whether the trajectory arrays should  be recomputed.""")
+        parser.add_argument("-s", "--state",
+                            action = "store",
+                            dest = "state",
+                            default = "apo",
+                            help = """Chose the type of simulation i.e. "holo" or "apo" or in the case of mutational, "K57G" etc.""")
         args = parser.parse_args()
 
     except argparse.ArgumentError:
         print("Command line arguments are ill-defined, please check the arguments")
         raise
 
+    global conform, recalc, state, path_head, fig_path, data_path, np_files, analysis_path
+
     # Assign group selection from argparse
     conform = args.conform
     recalc = args.recalc
+    state = args.state
 
     path_head = "/home/lf1071fu/project_b3"
-    fig_path = f"/home/lf1071fu/project_b3/figures/{ conform }"
-    str_path = f"{ path_head }/structures"
-    if conform == "holo":
-        data_path = f"{ path_head }/simulate/holo_conf/data"
-    elif conform == "apo":
-        data_path = f"{ path_head }/simulate/apo_conf/initial_10us"
-    else: 
-        print("ERROR: chose a valid conform from command line analysis.")
-        sys.exit(1)
 
-    #TO DO: CHECK THESE!
-    traj_name = "fitted_traj"
+    data_path, fig_path = get_sim_paths()
 
     # Load in universe objects for the simulation and the reference structures
-    u = mda.Universe(f"{ data_path }/topol.top", f"{ data_path }/{ traj_name }.xtc",
-                     topology_format="ITP")
+    u = mda.Universe(f"{ data_path }/topol_protein.top", f"{ data_path }/fitted_traj.xtc",
+                        topology_format='ITP')
 
-    holo_state = mda.Universe(f"{ str_path }/holo_state.pdb")
-    apo_state = mda.Universe(f"{ str_path }/apo_state1.pdb")
+    open_state = mda.Universe(f"{ path_head }/structures/open_ref_state.pdb")
+    closed_state = mda.Universe(f"{ path_head }/structures/closed_ref_state.pdb")
     # Starting structure as the ref state
     ref_state = u.select_atoms("protein")
 
-    # Find the core residues with low rmsf for both starting conformations
-    if not os.path.exists(f"{ data_path }/core_res.npy"):
-        top = f"{ data_path }/topol.top"
-        a = mda.Universe(top, f"{ path_head }/simulate/holo_conf/data/full_holo_apo.xtc",
-                         topology_format="ITP")
-        calphas, rmsf = get_rmsf(a, top, data_path)
-        core_res = calphas[(rmsf < 1.5)]
-        np.save(f"{ data_path }/core_res.npy", core_res)
-    else:
-        core_res = np.load(f"{ data_path }/core_res.npy")
+    # Indicies of the inflexible residues
+    core_res, core = get_core_res()
 
     # Atom group selection strings
     beta_flap_group = "backbone and (resid 195-218 or resid 739-762)"
     alpha_flap_group = "backbone and (resid 219-231 or resid 763-775)"
-    combo_group = "backbone and (resid 195-231 or  resid 739-775)"
-    aln_str = "protein and name CA and ("
-    core_holo = [f"resid {i} or " for i in core_res]
-    core_apo = [f"resid {i + 544} or " for i in core_res]
-    core = aln_str + "".join((core_holo + core_apo))[:-4] + ")"
+    combo_group = "backbone and (resid 195-231 or resid 739-775)"
 
     # Store calculated outputs as numpy arrays
-    np_files = [f"{ data_path }/rmsd_holo.npy", f"{ data_path }/rmsd_apo.npy",
-                f"{ data_path }/rmsf.npy", f"{ data_path }/calphas.npy",
-                f"{ data_path }/rad_gyration.npy",
-                f"{ data_path }/rama.npy", f"{ data_path }/chi_1s.npy",
-                f"{ data_path }/salt.npy", f"{ data_path}/salt_dist.npy",
-                f"{ data_path }/hpairs.npy"] #, f"{ data_path }/hbonds.npy",
-                #f"{ data_path }/hbond_count.npy", f"{ data_path }/times.npy"]
+    analysis_path = f"{ os.path.dirname(data_path) }/analysis"
+    if not os.path.exists(analysis_path):
+        os.makedirs(analysis_path)
+    print(f"data path : { data_path }\nfig path : { fig_path }\nanalysis path : { analysis_path }")
 
-    if all(list(map(lambda x : os.path.exists(x), np_files))) and not recalc:
+    # Analysis files stored as numpy arrays
+    np_files = {"R_open" : f"{ analysis_path }/rmsd_open.npy", 
+                "R_closed" : f"{ analysis_path }/rmsd_closed.npy",
+                "rmsf" : f"{ analysis_path }/rmsf.npy", 
+                "calphas" : f"{ analysis_path }/calphas.npy",
+                "r_gyr" : f"{ analysis_path }/rad_gyration.npy",
+                "rama" : f"{ analysis_path }/rama.npy", 
+                "chi_1s" : f"{ analysis_path }/chi_1s.npy",
+                "sc" : f"{ analysis_path }/salt.npy", 
+                "salt_dist" : f"{ analysis_path}/salt_dist.npy",
+                "hpairs" : f"{ analysis_path }/hpairs.npy", 
+                # "hbond_count" : f"{ analysis_path }/hbond_count.npy",
+                "time_ser" : f"{ analysis_path }/timeseries.npy"}
 
-        R_holo = np.load(np_files[0], allow_pickle=True)
-        R_apo = np.load(np_files[1], allow_pickle=True)
-        rmsf = np.load(np_files[2], allow_pickle=True)
-        calphas = np.load(np_files[3], allow_pickle=True)
-        r_gyr = np.load(np_files[4], allow_pickle=True)
-        rama = np.load(np_files[5], allow_pickle=True)
-        # # chi_1s is a dictionay object
-        chi_1s = np.load(np_files[6], allow_pickle=True)
-        sc = np.load(np_files[7], allow_pickle=True)
-        salt_dist = np.load(np_files[8], allow_pickle=True)
-        hpairs = np.load(np_files[9], allow_pickle=True)
+    # Store numpy arrays from analysis in the dictionary
+    arrs = {}
 
-        # hbonds = np.load(np_files[7], allow_pickle=True)
-        # hbond_count = np.load(np_files[8], allow_pickle=True)
-        # times = np.load(np_files[9], allow_pickle=True)
+    if all(list(map(lambda x : os.path.exists(x), np_files.values()))) and not recalc:
+
+        print(
+            "LOADING NUMPY ARRAYS"
+        )
+
+        for key, file in np_files.items(): 
+            arrs[key] = np.load(file, allow_pickle=True)
 
     else:
+    
+        print(
+            "EVALUATING WITH MDANALYSIS"
+        )
 
         u.transfer_to_memory()
 
         align.AlignTraj(u, ref_state, select=core, in_memory=True).run()
 
         protein = u.select_atoms("protein")
-        with mda.Writer(f"{ data_path }/snap_shots.pdb", protein.n_atoms) as W:
+        with mda.Writer(f"{ analysis_path }/snap_shots.pdb", protein.n_atoms) as W:
             for ts in u.trajectory:
-                if ts.time in [1000000, 3000000, 7000000, 9000000]:
+                if ((ts.time % 1000000) == 0):
                     W.write(protein)
 
         # Determine RMSD to ref structures
-        R_holo = get_rmsd(u, holo_state, core, ["backbone and resid 8:251",
-                          beta_flap_group, alpha_flap_group, combo_group])
-        R_apo = get_rmsd(u, apo_state, core, ["backbone and resid 8:251",
-                          beta_flap_group, alpha_flap_group, combo_group])
+        arrs["R_open"] = get_rmsd(u, open_state, core, ["backbone and resid 8:251",
+                          beta_flap_group, alpha_flap_group, combo_group], "open")
+        arrs["R_closed"] = get_rmsd(u, closed_state, core, ["backbone and resid 8:251",
+                          beta_flap_group, alpha_flap_group, combo_group], "closed")
 
         # Determine RMSF by first finding and aligning to the average structure
-        calphas, rmsf = get_rmsf(u, f"{ data_path }/protein.gro", core, data_path)
+        arrs["calphas"], arrs["rmsf"] = get_rmsf(u, f"{ data_path }/topol_protein.top", core_res)
 
-        # Determine the radius of gyration
-        r_gyr = get_rgyr(u)
+        # Determine the radius of gyration and extract a time series of the simulation
+        arrs["r_gyr"], arrs["time_ser"] = get_rgyr(u)
 
         # Phi and Psi backbone dihedrals
-        rama = dihedrals.Ramachandran(u.residues[195:232]).run()
-        rama = rama.results.angles
+        resids = u.residues[195:232]
+        rama = dihedrals.Ramachandran(resids).run()
+        arrs["rama"] = rama.results.angles
+        np.save(np_files["rama"], arrs["rama"])
         
         # Chi1 dihedrals
-        chi_1s = dict()
-        for res in u.residues[195:232]:
+        arrs["chi_1s"] = np.zeros((len(arrs["time_ser"]), len(resids)))
+        for res in resids:
             group = res.chi1_selection()
             if group is not None:
-                 dihs = dihedrals.Dihedral([group]).run()
-                 chi_1s[res.ix] = dihs.results.angles
+                dihs = dihedrals.Dihedral([group]).run()
+                arrs["chi_1s"][:,res.ix-195-1] = dihs.results.angles[:,0]
+        np.save(np_files["chi_1s"], arrs["chi_1s"])
         
         # Salt-bridge contacts
-        sc = get_salt_contacts(u, ref_state, data_path)
-        salt_dist = get_bridges(u, data_path)
+        arrs["sc"] = get_salt_contacts(u, ref_state)
+        arrs["salt_dist"] = get_bridges(u)
 
-        # # Hydrogen bonds analysis (intramolecular, not with solvent)
-        # hbonds, hbond_count, times = get_hbonds(u, path)
-        hpairs = get_hbond_pairs(u, data_path)
-
-        for f, v in zip(np_files, [R_holo, R_apo, rmsf, calphas, r_gyr, rama, chi_1s,
-                                   sc, salt_dist, hpairs]): #hbonds, hbond_count, times]):
-            np.save(f, v)
+        # Hydrogen bonds analysis (intramolecular, not with solvent)
+        arrs["hpairs"] = get_hbond_pairs(u)
+        # arrs["hbond_count"] = get_hbonds(u)
 
     # Make plots for simulation analysis
-    # plot_rmsd(R_holo, R_apo, fig_path)
-    # plot_rmsf(calphas, rmsf, fig_path)
-    # plot_rmsd_time(R_apo, fig_path)
-    # plot_rgyr(r_gyr, fig_path)
+    plot_rmsd(arrs["R_open"], arrs["R_closed"], arrs["time_ser"])
+
+    plot_rmsf(arrs["calphas"], arrs["rmsf"])
+    plot_rmsd_time(arrs["R_open"], arrs["time_ser"], ref_state="open")
+    plot_rmsd_time(arrs["R_closed"], arrs["time_ser"], ref_state="closed")
+    plot_rgyr(arrs["r_gyr"], arrs["time_ser"])
 
     # Plots for individual residues: Ramachandran and Chi_1
-    # for i, id in enumerate(np.arange(198,232)):
-    #     res = u.residues[id]
-    #     plot_ramachandran(rama[:,i,0], rama[:,i,1], res, fig_path)
-    # for key, chi_1 in chi_1s.items():
-    #     res = u.residues[key]
-    #     plot_chi1(res, chi_1, fig_path)
-    #
-    print(hpairs.shape)
-    # plot_salt_bridges(sc, fig_path)
-    # plot_bridges(salt_dist, r_gyr, fig_path)
-    plot_hbond_pairs(hpairs, r_gyr, fig_path)
-    #plot_hbonds_count(hbond_count, times, fig_path)
+    for i, id in enumerate(np.arange(198,232)):
+        res = u.residues[id]
+        plot_ramachandran(arrs["rama"][:,i,0], arrs["rama"][:,i,1], res)
+        plot_chi1(res, arrs["chi_1s"][:,i])
+
+    plot_salt_frac(arrs["sc"], arrs["time_ser"])
+    plot_bridges(arrs["salt_dist"], arrs["time_ser"])
+    plot_hbond_pairs(arrs["hpairs"], arrs["time_ser"])
+    # plot_hbonds_count(arrs["hbond_count"], arrs["time_ser"])
 
     return None
 
-def get_rmsd(system, reference, alignment, group):
+def get_sim_paths():
+    """Get the relevant paths for the experiment.
+
+    Paths need to be added manually to the dictionary in order to make use of
+    data within the paths. Includes a check to verify the paths exist. 
+
+    Returns
+    -------
+    data_path : str
+        Path to the directory in which trajectory data is stored.
+    fig_path : str
+        Path to the directory in which analysis plots should be saved.
+
+    """
+    # Include explicit data and figure paths
+    paths = {
+        "apo-open" : (f"{ path_head }/simulate/apo_state/open/data", 
+                        f"{ path_head }/figures/apo-open"),
+        "apo-closed" : (f"{ path_head }/simulate/apo_state/closed/data", 
+                        f"{ path_head }/figures/apo-closed"),
+        "holo-open" : (f"{ path_head }/simulate/holo_state/open/data", 
+                        f"{ path_head }/figures/holo-open"),
+        "holo-closed" : (f"{ path_head }/simulate/holo_state/closed/data", 
+                        f"{ path_head }/figures/holo-closed"),
+        "K57G-open" : (f"{ path_head }/simulate/mutation/K57G_o/nobackup", 
+                        f"{ path_head }/figures/mutation/K57G_o"),
+        "K57G-closed" : (f"{ path_head }/simulate/mutation/K57G_c", 
+                        f"{ path_head }/figures/mutation/K57G_c"),
+        "LYN57-open" : (f"{ path_head }/simulate/mutation/LYN57_o/nobackup", 
+                        f"{ path_head }/figures/mutation/LYN57_o"),
+        "LYN57-closed" : (f"{ path_head }/simulate/mutation/LYN57_c/nobackup", 
+                        f"{ path_head }/figures/mutation/LYN57_c"),
+        "LYS57-open" : (f"{ path_head }/simulate/mutation/LYS57_o/nobackup", 
+                        f"{ path_head }/figures/mutation/LYS57_o"), 
+        "LYS57-closed" : (f"{ path_head }/simulate/mutation/LYS57_c/nobackup", 
+                        f"{ path_head }/figures/mutation/LYS57_c"),
+        "double-closed" : (f"{ path_head }/simulate/mutation/double_mutant", 
+                        f"{ path_head }/figures/mutation/double_mut"),
+    }
+
+    # Check that paths exist and assign to var
+    for path in paths[f"{ state }-{ conform }"]:
+        if os.path.exists(path):
+            data_path, fig_path = paths[f"{ state }-{ conform }"]
+        else:
+            print(f"The path '{ path }' does not exist. Chose a valid state and conformation combination from the command-line arguements.")
+            sys.exit(1)
+
+    return data_path, fig_path
+
+def get_core_res(recalc=False):
+    """Finds the core residues which are immobile across the conformational states.
+
+    Uses data from the combined simulation of the apo states open and closed simulations,
+    to get the calphas of the residues with an RMSF below 1.5.
+
+    Parameters
+    ----------
+    recalc : boolean
+        Indicates whether the core_res array should be redetermined.
+
+    Returns
+    -------
+    core_res : nd.array
+        Indicies for the less mobile residues across conformational states. 
+    core : str
+        Selection string for the core residues.
+
+    """
+    core_res_path = f"{ path_head }/simulate/apo_state/open/data"
+    if not os.path.exists(f"{ core_res_path }/core_res.npy") or recalc:
+        top = f"{ core_res_path }/topol.top"
+        a = mda.Universe(top, f"{ core_res_path }/simulate/holo_conf/data/full_holo_apo.xtc",
+                         topology_format="ITP")
+        calphas, rmsf = get_rmsf(a, top, core_res_path)
+        core_res = calphas[(rmsf < 1.5)]
+        np.save(f"{ core_res_path }/core_res.npy", core_res)
+    else:
+        core_res = np.load(f"{ core_res_path }/core_res.npy")
+
+    aln_str = "protein and name CA and ("
+    core_open = [f"resid {i} or " for i in core_res]
+    core_closed = [f"resid {i + 544} or " for i in core_res]
+    core = aln_str + "".join((core_open + core_closed))[:-4] + ")"
+
+    return core_res, core
+
+def get_rmsd(system, reference, alignment, group, ref_state):
     """Determines the rmsd over the trajectory against a reference structure.
 
     The MDAnalysis.analysis.rms.results array is saved as a numpy array file,
@@ -191,6 +277,8 @@ def get_rmsd(system, reference, alignment, group):
         The group for the alignment, i.e. all the alpha carbons.
     group : MDAnalysis.core.groups.AtomGroup
         The group for the RMSD, e.g. the beta flap residues.
+    ref_state : str
+        The reference state as a conformational description, i.e. "open" or "closed".
 
     Returns
     -------
@@ -208,9 +296,14 @@ def get_rmsd(system, reference, alignment, group):
 
     rmsd_arr = R.results.rmsd
 
+    if ref_state == "open":
+        np.save(np_files["R_open"], rmsd_arr)
+    elif ref_state == "closed":
+        np.save(np_files["R_closed"], rmsd_arr)
+
     return rmsd_arr
 
-def get_rmsf(u, top, ref_group, path):
+def get_rmsf(u, top, core_res):
     """Determines the RMSF per residue.
 
     The average structure is calculated and then used as the reference for
@@ -224,8 +317,6 @@ def get_rmsf(u, top, ref_group, path):
         The topology file, e.g. xxx.gro.
     ref_group : str
         Atom group selection string of the core residues for the alignment.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -243,21 +334,24 @@ def get_rmsf(u, top, ref_group, path):
     ref_coords = u.trajectory.timeseries(asel=protein).mean(axis=1)
     ref = mda.Merge(protein).load_new(ref_coords[:, None, :],
                               order="afc")
-    aligner = align.AlignTraj(u, ref, select=ref_group, in_memory=True).run()
-    with mda.Writer(f"{ path }/rmsfit.xtc", n_atoms=u.atoms.n_atoms) as W:
+    aligner = align.AlignTraj(u, ref, select="protein and name CA", in_memory=True).run()
+    with mda.Writer(f"{ data_path }/rmsfit.xtc", n_atoms=u.atoms.n_atoms) as W:
         for ts in u.trajectory:
             W.write(u.atoms)
 
     from MDAnalysis.analysis.rms import RMSF
 
-    u = mda.Universe(top, f"{ path }/rmsfit.xtc")
+    u = mda.Universe(top, f"{ data_path }/rmsfit.xtc", topology_format='ITP')
     calphas = protein.select_atoms("protein and name CA")
 
     rmsfer = RMSF(calphas).run()
 
+    np.save(np_files["calphas"], calphas.resnums)
+    np.save(np_files["rmsf"], rmsfer.results.rmsf)
+
     return calphas.resnums, rmsfer.results.rmsf
 
-def get_salt_contacts(u, ref_state, path):
+def get_salt_contacts(u, ref_state):
     """Runs the Contacts module to get the number of salt contacts.
 
     Arginine and lysine residues are considered as the basic residues, while
@@ -270,8 +364,6 @@ def get_salt_contacts(u, ref_state, path):
         The universe object, with the trajectory loaded in.
     ref_state : MDAnalysis.core.universe.Universe
         The universe object for the reference state.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -289,9 +381,11 @@ def get_salt_contacts(u, ref_state, path):
     salt_contacts.run()
     sc = salt_contacts.results.timeseries
 
+    np.save(np_files["sc"], sc)
+
     return sc
 
-def get_bridges(u, path):
+def get_bridges(u):
     """Calculates the distance of special salt contacts in the alpha + beta flaps.
 
     Arginine and lysine residues are considered as the basic residues, while
@@ -301,8 +395,6 @@ def get_bridges(u, path):
     ----------
     u : MDAnalysis.core.universe.Universe
         The universe object, with the trajectory loaded in.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -315,7 +407,8 @@ def get_bridges(u, path):
         (("resid 227 and name NZ*"),("resid 213 and name OD*")), # K227 -- D213
         #(("resid 232 and name NZ*"),("resid 149 and name OE*")), # K232 -- E149
         (("resid 202 and name NH*"),("resid 210 and name OE*")), # R202 -- E210
-        (("resid 57 and name NZ*"),("resid 200 and name OE*"))] # K57 -- E200
+        (("resid 57 and (name NZ* or (resname GLY and name CA))"),
+         ("resid 200 and (name OE* or (resname GLY and name CA))"))] # K57 -- E200
 
     pairs = []
 
@@ -325,7 +418,8 @@ def get_bridges(u, path):
         pairs.append((sel_basic, sel_acidic))
 
         #dist_pair1 = distance_array(u.coord[ca_pair1_1], u.coord[ca_pair1_2])
-    distances = np.zeros((u.trajectory.n_frames, 4))
+    sig_bridges = 4
+    distances = np.zeros((u.trajectory.n_frames, sig_bridges))
 
     # Loop over all frames in the trajectory
     for ts in u.trajectory:
@@ -334,12 +428,13 @@ def get_bridges(u, path):
         d2 = distance_array(pairs[1][0].positions, pairs[1][1].positions)
         d3 = distance_array(pairs[2][0].positions, pairs[2][1].positions)
         d4 = distance_array(pairs[3][0].positions, pairs[3][1].positions)
-        # Store the distances in the distances array
         distances[ts.frame] = [np.min(d1), np.min(d2), np.min(d3), np.min(d4)]
+
+    np.save(np_files["salt_dist"], distances)
 
     return distances
 
-def get_hbonds(u, path):
+def get_hbonds(u):
     """Find the intramolecular hydrogen bonds in the simulation.
 
     The donor-acceptor distance cutoff is 3 A and the donor-hydrogen-acceptor
@@ -351,8 +446,6 @@ def get_hbonds(u, path):
     ----------
     u : MDAnalysis.core.universe
         The universe object, with the trajectory loaded in.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -369,13 +462,12 @@ def get_hbonds(u, path):
     hbonds.run()
     tau_timeseries, timeseries = hbonds.lifetime()
 
-
     # these get their own np arrays
     times = hbonds.times
     hbond_count = hbonds.count_by_time()
 
     # Analyze the bond types
-    f = open(f"{ path }/hbond_types.txt", "w")
+    f = open(f"{ analysis_path }/hbond_types.txt", "w")
     f.write("The average number of each type of hydrogen bond formed at each"
             " frame:\n")
 
@@ -392,9 +484,9 @@ def get_hbonds(u, path):
             f.write(f"{donor} to {acceptor}: {mean_count:.2f}\n")
     f.close()
 
-    f = open(f"{ path }/significant_hbonds.txt", "w")
+    f = open(f"{ analysis_path }/significant_hbonds.txt", "w")
     f.write("A descending list of h-bonds formed between atom pairs.\n"\
-            "Donor, Hydrogen, Acceptor, Count\n")
+            "Donor\tHydrogen\tAcceptor\tCount\tFlaps?\n")
 
     def describe_at(atom):
         a = u.atoms[atom-1]
@@ -405,21 +497,25 @@ def get_hbonds(u, path):
     for d, h, a, count in c:
         if count < 10:
             continue
+        if d.resid or a.resid in np.arange(195,232 + 1):
+            in_flap = True
+        else:
+            in_flap = False
         f.write(f"{ describe_at(d) }\t{ describe_at(h) }\t{ describe_at(a) } "\
-                f"\t{ count }\n")
+                f"\t{ count }\t{ in_flap }\n")
     f.close()
 
-    return hbonds, hbond_count, times
+    np.save(np_files["hbond_count"], hbond_count)
 
-def get_hbond_pairs(u, path):
+    return hbond_count
+
+def get_hbond_pairs(u):
     """Calculates the distance of special hbond contacts in the alpha + beta flaps.
 
     Parameters
     ----------
     u : MDAnalysis.core.universe.Universe
         The universe object, with the trajectory loaded in.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -451,31 +547,57 @@ def get_hbond_pairs(u, path):
         d4 = distance_array(pairs[3][0].positions, pairs[3][1].positions)
 
         # Store the distances in the distances array
-        distances[ts.frame] = [np.min(d1), np.min(d2), np.min(d3), np.min(d3)]
+        distances[ts.frame] = [np.min(d1), np.min(d2), np.min(d3), np.min(d4)]
+
+    np.save(np_files["hpairs"], distances)
 
     return distances
 
 def get_rgyr(u):
-    """
+    """Determine the radius of gyration as a timeseries.
+
+    The radius of gyration is a measure of how compact the 
+    structure is, such that an increase may indicate unfolding 
+    or opening.
+
+    Parameters
+    ----------
+    u : MDAnalysis.core.universe.Universe
+        The universe object, with the trajectory loaded in.
+
+    Returns
+    -------
+    r_gyr : nd.nparray
+        The radius of gyration in units of Angstrom.
+    time_ser : nd.nparray
+        A time series of the trajectory in ps. 
+    
     """
     r_gyr = []
+    time_ser = []
     protein = u.select_atoms("protein")
     for ts in u.trajectory:
-       r_gyr.append((u.trajectory.time, protein.radius_of_gyration()))
+       r_gyr.append(protein.radius_of_gyration())
+       time_ser.append(ts.time)
     r_gyr = np.array(r_gyr)
-    return r_gyr
+    time_ser = np.array(time_ser)
 
-def plot_rmsd(r_holo, r_apo, path): 
+    np.save(np_files["r_gyr"], r_gyr)
+    np.save(np_files["time_ser"], time_ser)
+
+    return r_gyr, time_ser
+
+def plot_rmsd(r_open, r_closed, time_ser): 
     """Makes a plot of the rmsd against two ref structures with a color bar.
 
     Parameters
     ----------
-    r_holo : MDAnalysis.analysis.rms.RMSD or nparray
-        A time series of the rmsd with the holo crystal structure as reference.
-    r_apo : MDAnalysis.analysis.rms.RMSD or nparray
-        A time series of the rmsd with the apo crystal structure as reference.
-    path : str
-        Path to the primary working directory.
+    r_open : MDAnalysis.analysis.rms.RMSD or nparray
+        A time series of the rmsd with the open crystal structure as reference.
+    r_closed : MDAnalysis.analysis.rms.RMSD or nparray
+        A time series of the rmsd with the closed crystal structure as reference.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
 
     Returns
     -------
@@ -484,58 +606,72 @@ def plot_rmsd(r_holo, r_apo, path):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
 
-    d = ax.scatter(r_holo[:,3], r_apo[:,3], c=np.arange(0,len(r_holo[:,0])),
-                cmap="cividis", label=r"Full backbone", marker="X")
-    d = ax.scatter(r_holo[:,4], r_apo[:,4], c=np.arange(0,len(r_holo[:,0])),
-                cmap="cividis", label=r"$\beta$-flap", marker="o")
-    d = ax.scatter(r_holo[:,5], r_apo[:,5], c=np.arange(0,len(r_holo[:,0])),
-                cmap="cividis", label=r"$\alpha$-flap", marker="D")
+    ax.scatter(r_open[:,3], r_closed[:,3], c=time_ser,
+                cmap="cividis", label=r"Full backbone", marker="s", s=300, 
+                edgecolors="#404040")
+    ax.scatter(r_open[:,5], r_closed[:,5], c=time_ser,
+                cmap="cividis", label=r"$\alpha$-flap", marker="D", s=300,
+                edgecolors="#404040")
+    d = ax.scatter(r_open[:,4], r_closed[:,4], c=time_ser,
+                cmap="cividis", label=r"$\beta$-flap", marker="o", s=300,
+                edgecolors="#404040")
+
+    print(len(time_ser))
 
     # Colormap settings
     cbar = plt.colorbar(d)
-    cbar.set_label(r'Time [$\mu$s]', fontsize=28, labelpad=10)
-    cbar.ax.yaxis.set_ticks(np.arange(0,len(r_holo[:,0]),1000))
-    cticks = list(map(lambda x: str(x/1000).split(".")[0],
-                      np.arange(0,len(r_holo[:,0]),1000)))
-    cbar.ax.yaxis.set_ticklabels(cticks)
-    cbar.ax.tick_params(labelsize=16, direction='out', width=2, length=5)
+    num_ticks = 10
+    cticks = time_ser[::(len(time_ser) // num_ticks)]
+    cbar.ax.yaxis.set_ticks(cticks)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        cbar.set_label(r'Time ($\mu$s)', fontsize=32, labelpad=10)
+        ctick_lab = list(map(lambda x: str(x/1e6).split(".")[0], cticks))
+    else:
+        # Use nanoseconds for time labels
+        cbar.set_label(r'Time (ns)', fontsize=32, labelpad=10)
+        ctick_lab = list(map(lambda x: str(x/1e3).split(".")[0], cticks))
+    cbar.ax.yaxis.set_ticklabels(ctick_lab)
+    cbar.ax.tick_params(labelsize=24, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
 
     # Plot settings
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
+    ax.tick_params(axis='y', labelsize=24, direction='in', width=2, \
                     length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
+    ax.tick_params(axis='x', labelsize=24, direction='in', width=2, \
                     length=5, pad=10)
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"RMSD to holo state ($\AA$)", labelpad=5, \
-                    fontsize=28)
-    ax.set_ylabel(r"RMSD to apo state ($\AA$)", labelpad=5, fontsize=28)
+    ax.set_xlabel(r"RMSD to open state ($\AA$)", labelpad=5, \
+                    fontsize=32)
+    ax.set_ylabel(r"RMSD to closed state ($\AA$)", labelpad=5, fontsize=32)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
-    ax.set_xlim(0,xmax)
-    ax.set_ylim(0,ymax)
+    ax.set_xlim(0,15)
+    ax.set_ylim(0,15)
 
-    plt.legend(fontsize=24)
+    plt.legend(fontsize=28)
 
-    plt.savefig(f"{ path }/rmsd.pdf")
+    plt.savefig(f"{ fig_path }/rmsd_2D.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_rmsf(calphas, rmsf, path):
+def plot_rmsf(calphas, rmsf):
     """Makes an RMSF plot.
+
+    RMSF helps to understand which residues in the protein tend to undergo
+    large fluctuations and which residues may be part of a more stable core 
+    structure.
 
     Parameters
     ----------
     resnums : MDAnalysis.core.groups.AtomGroup
-        The atom group used for the RMSF calculation consists of all the alpha
-        carbons in the protein.
+        The atom group used for the RMSF calculation consists of all the 
+        alpha carbons in the protein.
     rmsf : np.ndarray
         The rmsf of the selected atom groups.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -543,7 +679,7 @@ def plot_rmsf(calphas, rmsf, path):
 
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
-    resids = list(map(lambda x : x + 544, calphas))
+    #resids = list(map(lambda x : x + 544, calphas))
     plt.plot(calphas, rmsf, lw=3, color="#47abc4")
 
     # Plot settings
@@ -563,23 +699,41 @@ def plot_rmsf(calphas, rmsf, path):
               colors="#dba61f")
     ax.set_ylim(-1,10)
 
-    plt.savefig(f"{ path }/rmsf.pdf")
+    plt.savefig(f"{ fig_path }/rmsf.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_rmsd_time(r_apo, path):
-    """
+def plot_rmsd_time(rmsd, time_ser, ref_state):
+    """Makes a time series of the RMSD against a reference.
+
+    The RMSD is shown for the protein backbone as well as the backbone of the
+    alpha and beta flaps.
+
+    Parameters
+    ----------
+    r_open : MDAnalysis.analysis.rms.RMSD or nparray
+        A time series of the rmsd with the open crystal structure as reference.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
+    ref_state : str
+        Name of the reference structure used in the RMSD computation, i.e. "open" 
+        or "closed".
+
+    Returns
+    -------
+    None.
+
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(24,8))
-    time = r_apo[:,0]
-    #plt.plot(time, r_apo[:,2], lw=2, color="#02ab64", alpha=0.8,
+    stride = 10
+    #plt.plot(time, rmsd[:,2], lw=2, color="#02ab64", alpha=0.8,
     #         label="core")
-    plt.plot(time[::10], r_apo[:,5][::10], lw=3, color="#02ab64", alpha=0.8,
-             label="alpha flap")
-    plt.plot(time[::10], r_apo[:,4][::10], lw=3, color="#dba61f", alpha=0.8,
-             label="beta flap")
-    plt.plot(time[::10], r_apo[:,3][::10], lw=3, color="#47abc4", alpha=0.8,
+    plt.plot(time_ser[::stride], rmsd[:,5][::stride], lw=3, color="#02ab64", alpha=0.8,
+             label=r"$\alpha-$flap")
+    plt.plot(time_ser[::stride], rmsd[:,4][::stride], lw=3, color="#dba61f", alpha=0.8,
+             label=r"$\beta-$flap")
+    plt.plot(time_ser[::stride], rmsd[:,3][::stride], lw=3, color="#47abc4", alpha=0.8,
              label="full backbone")
 
     # Plot settings
@@ -587,25 +741,35 @@ def plot_rmsd_time(r_apo, path):
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=32, direction='in', width=2, \
                     length=5, pad=10)
-    xticks = np.arange(0,len(time),1000)
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
     ax.set_xticks(xticks)
-    ax.set_xticklabels(list(map(lambda x : str(x/1000).split(".")[0], xticks)))
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=38, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=38, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"time ($\mu s$)", labelpad=5, fontsize=38)
-    ax.set_ylabel(r"RMSD ($\AA$)", labelpad=5, fontsize=38)
+    ax.set_ylabel(f"RMSD$_{ {ref_state} }$ ($\AA$)", labelpad=5, fontsize=38)
     _, ymax = ax.get_ylim()
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=28)
 
-    plt.savefig(f"{ path }/rmsd_time.pdf", dpi=300)
+    plt.savefig(f"{ fig_path }/rmsd_time_{ ref_state }.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_ramachandran(phis, psis, res, path):
-    """Make a Ramachandran plot for the given residues.
+def plot_ramachandran(phis, psis, res):
+    """Makes a Ramachandran plot for the given residue.
+
+    A separate Ramachandran plot should be used for each of the 
+    residues under consideration. 
 
     Parameters
     ----------
@@ -615,8 +779,6 @@ def plot_ramachandran(phis, psis, res, path):
         A timeseries of the psi dihedrals for the residue group.
     resnum : MDAnalysis.core.groups.Residue
         The residue object for the ramachandran plot.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -654,16 +816,19 @@ def plot_ramachandran(phis, psis, res, path):
     plt.legend(fontsize=20)
 
     # Save plot to file
-    plot_path = f"{ path }/ramachandran"
+    plot_path = f"{ fig_path }/ramachandran"
     if not os.path.exists(plot_path):
        os.makedirs(plot_path)
-    plt.savefig(f"{ plot_path }/res_{ res.resid }.pdf")
+    plt.savefig(f"{ plot_path }/res_{ res.resid }.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_chi1(res, chi_1, path):
-    """Make a chi_1 plot for the given residue.
+def plot_chi1(res, chi_1):
+    """Makes a chi_1 plot for the given residue.
+
+    A separate Ramachandran plot should be used for each of the 
+    residues under consideration. 
 
     Parameters
     ----------
@@ -671,8 +836,6 @@ def plot_chi1(res, chi_1, path):
         The residue object for the chi_1 plot.
     chi_1 : np.ndarray
         A timeseries of the chi 1 dihedrals for the residue group.
-    path : str
-        Path to the primary working directory.
 
     Returns
     -------
@@ -698,16 +861,16 @@ def plot_chi1(res, chi_1, path):
     plt.xlim([-180, 180])
     plt.legend(fontsize=20)
 
-    plot_path = f"{ path }/chi_1s"
+    plot_path = f"{ fig_path }/chi_1s"
     if not os.path.exists(plot_path):
        os.makedirs(plot_path)
-    plt.savefig(f"{ plot_path }/res_{ res.resid }.pdf")
+    plt.savefig(f"{ plot_path }/res_{ res.resid }.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_salt_bridges(sc, path):
-    """Make a plot for the fraction of salt contacts compared to the reference.
+def plot_salt_frac(sc, time_ser):
+    """Makes a plot for the fraction of salt contacts compared to the reference.
 
     A soft cut-off from 4 A was used to determine the fraction of salt bridges
     retained from the reference structure. This includes bridges between the
@@ -718,51 +881,57 @@ def plot_salt_bridges(sc, path):
     sc : np.ndarray
         A timeseries of the fraction of salt bridge contacts, relative to the
         reference structure.
-    path : str
-        Path to the primary working directory.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
 
     Returns
     -------
     None.
 
     """
-
-    print(sc.shape)
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
     ave_contacts = np.mean(sc[:, 1])
     print(f"average contacts = { ave_contacts }")
-    sc = sc[::40]
+    stride = 10
 
-    ax.scatter(sc[:, 0], sc[:, 1], s=150, color="#00C27B")
+    ax.scatter(time_ser[::stride], sc[::stride, 1], s=150, color="#00C27B")
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
+    ax.set_xticks(xticks)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"Frame", labelpad=5, fontsize=24)
     ax.set_ylabel(r"Fraction of Native Contacts", labelpad=5, fontsize=24)
     plt.ylim([0, 1])
 
-    plt.savefig(f"{ path }/salt_contacts.pdf")
+    plt.savefig(f"{ fig_path }/salt_contacts.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_hbonds_count(hbond_count, times, path):
-    """Make a plot for the number of hbonds at each time step.
+def plot_hbonds_count(hbond_count, time_ser):
+    """Makes a plot for the number of hbonds at each time step.
 
     Parameters
     ----------
     hbond_count : np.ndarray
         A trajectory of the hydrogen bond count.
-    times : np.ndarray
-        The trajectory times as an array in ps.
-    path : str
-        Path to the primary working directory.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
 
     Returns
     -------
@@ -770,43 +939,73 @@ def plot_hbonds_count(hbond_count, times, path):
 
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+    stride = 10
 
-    plt.scatter(times[::100]/(1e6), hbond_count[::100], s=150,
-                color="#00C27B")
+    plt.scatter(time_ser[::stride], hbond_count[::stride], s=150, color="#00C27B")
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
+    ax.set_xticks(xticks)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"Time ($\mu$s)", labelpad=5, fontsize=24)
     ax.set_ylabel(r"$N_{HB}$", labelpad=5, fontsize=24)
     plt.ylim([0,100])
 
-    plt.savefig(f"{ path }/hbonds_count.pdf")
+    plt.savefig(f"{ fig_path }/hbonds_count.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_rgyr(r_gyr, path):
+def plot_rgyr(r_gyr, time_ser):
+    """Makes a timeseries of the radius of gyration.
+
+    The radius of gyration is a measure of how compact the 
+    structure is, such that an increase my indicate unfolding 
+    or opening.
+
+    Parameters
+    ----------
+    r_gyr : np.ndarray
+        The radius of gyration in units of Angstrom.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
+    """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(24,8))
 
-    time = r_gyr[:,0] / 1000
-    plt.plot(time[::10], r_gyr[:,1][::10], "--", lw=3, color="#02ab64", label=r"$R_G$")
+    stride = 10
+    plt.plot(time_ser[::stride], r_gyr[::stride], "--", lw=3, color="#02ab64", label=r"$R_G$")
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=32, direction='in', width=2, \
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=32, direction='in', width=2, \
                     length=5, pad=10)
-    xticks = np.arange(0,len(time),1000)
-
+    
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
     ax.set_xticks(xticks)
-    x_labels = list(map(lambda x : str(x/1000).split(".")[0], xticks))
-    ax.set_xticklabels(x_labels)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
@@ -814,15 +1013,32 @@ def plot_rgyr(r_gyr, path):
     ax.set_ylabel(r"Radius of Gyration $R_G$ ($\AA$)", labelpad=5, fontsize=38)
     plt.legend(fontsize=28)
 
-    plt.savefig(f"{ path }/rad_gyration.pdf", dpi=300)
+    plt.savefig(f"{ fig_path }/rad_gyration.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_bridges(salt_dist, r_gyr, path):
+def plot_bridges(salt_dist, time_ser):
+    """Makes a time series plot of the distances of notable bridges.
+
+    The plot includes a dotted line to indicate the upper limit of a typical 
+    salt bridge interaction.
+
+    Parameters
+    ----------
+    hpairs : np.ndarray
+        A time series of the four distance arrays for notable salt bridges in the beta
+        flap, alpha flap and the IP6 binding pocket.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
+
+    Returns
+    -------
+    None.
+
+    """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    time = r_gyr[:,0] / 1000
     stride = 10
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
     labels = [r"$\alpha - \beta \:$ R208$-$E222",
@@ -831,9 +1047,9 @@ def plot_bridges(salt_dist, r_gyr, path):
               r"$\beta - \beta \:$ R202$-$E210",
               r"Pocket$-\beta$ K57$-$E200"]
 
-    for i in range(4):
+    for i in range(len(salt_dist[0,:])):
 
-        plt.plot(time[::stride], salt_dist[::stride,i], "-", lw=3, color=colors[i], 
+        plt.plot(time_ser[::stride], salt_dist[::stride,i], "-", lw=3, color=colors[i], 
             label=labels[i], alpha=0.8,
             path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
 
@@ -845,38 +1061,60 @@ def plot_bridges(salt_dist, r_gyr, path):
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
-    xticks = np.arange(0,len(time),1000)
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
     ax.set_xticks(xticks)
-    ax.set_xticklabels(list(map(lambda x : str(x/1000).split(".")[0], xticks)))
-    ax.set_xlabel(r"Time ($\mu s$)", labelpad=5, fontsize=24)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_ylabel("Distance ($\AA$)", labelpad=5, fontsize=24)
+    ax.set_ylabel(r"Distance ($\AA$)", labelpad=5, fontsize=24)
     plt.ylim([0, 40])
     _, xmax = ax.get_xlim()
     ax.set_xlim(0,xmax)
     plt.legend(fontsize=24, ncol=2)
 
-    plt.savefig(f"{ path }/salt_bridges.pdf", dpi=300)
+    plt.savefig(f"{ fig_path }/salt_bridges.png", dpi=300)
     plt.close()
 
     return None
 
-def plot_hbond_pairs(hpairs, r_gyr, path):
+def plot_hbond_pairs(hpairs, time_ser):
+    """Makes a time series plot of the distances of notable H-bonding pairs.
+
+    The plot includes a dotted line to indicate the upper limit of a typical 
+    hydrogen bond.
+
+    Parameters
+    ----------
+    hpairs : np.ndarray
+        A time series of the four distance arrays for notable H-bonds in the beta
+        flap, alpha flap and the IP6 binding pocket.
+    time_ser : np.ndarray
+        A time series of the simulation time in ps.
+
+    Returns
+    -------
+    None.
+
+    """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    time = r_gyr[:,0] / 1000
     stride = 10
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
     labels = [r"N204$-$R208", r"S231$-$R209",
               r"N197$-$R209", r"N53$-$E200"]
 
-    print(hpairs[::1000,3])
-
     for i in range(4):
 
-        plt.plot(time[::stride], hpairs[::stride,i], "-", lw=3, color=colors[i], 
+        plt.plot(time_ser[::stride], hpairs[::stride,i], "-", lw=3, color=colors[i], 
             label=labels[i], alpha=0.8,
             path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
 
@@ -888,10 +1126,17 @@ def plot_hbond_pairs(hpairs, r_gyr, path):
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
-    xticks = np.arange(0,len(time),1000)
+    num_ticks = 10
+    xticks = time_ser[::(len(time_ser) // num_ticks)]
     ax.set_xticks(xticks)
-    ax.set_xticklabels(list(map(lambda x : str(x/1000).split(".")[0], xticks)))
-    ax.set_xlabel(r"Time ($\mu s$)", labelpad=5, fontsize=24)
+    if time_ser[-1] > 1e6:
+        # Use microseconds for time labels
+        ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+    else:
+        # Use nanoseconds for time labels
+        ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
@@ -901,7 +1146,7 @@ def plot_hbond_pairs(hpairs, r_gyr, path):
     ax.set_xlim(0,xmax)
     plt.legend(fontsize=24, ncol=2)
 
-    plt.savefig(f"{ path }/hpairs.pdf", dpi=300)
+    plt.savefig(f"{ fig_path }/hpairs.png", dpi=300)
     plt.close()
 
     return None

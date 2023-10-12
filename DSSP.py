@@ -12,48 +12,122 @@ def main(argv):
     try:
         parser = argparse.ArgumentParser()
 
-        parser.add_argument("-c", "--conform",
+        parser.add_argument("-p", "--path",
                             action = "store",
-                            dest = "conform",
-                            default = "holo",
-                            help = """Chose a conformer for analysis. I.e. "holo" or "apo".""")
+                            dest = "path",
+                            required = True,
+                            help = """Set path to the data directory.""")
         parser.add_argument("-s", "--subset",
                             action = "store_true",
                             dest = "subset",
                             default = False,
                             help = """Make a DSSP plot for just a subset of residues.""")
+        parser.add_argument("-u", "--umbrella",
+                            action = "store_true",
+                            dest = "umbrella",
+                            default = False,
+                            help = """Make plots from umbrella sampling data, with a separate DSSP plot for each window.""")
+        parser.add_argument("-f", "--figpath",
+                            action = "store",
+                            dest = "fig_path",
+                            default = False,
+                            help = """Set a path destination for the figure.""")
+        parser.add_argument("-b", "--bridge",
+                            action = "store_true",
+                            dest = "salt_bridge",
+                            default = False,
+                            help = """Set a path destination for the figure.""")                    
         args = parser.parse_args()
 
     except argparse.ArgumentError:
         print("Command line arguments are ill-defined, please check the arguments")
         raise
 
-    # Assign group selection from argparse
-    conform = args.conform   
-    subset = args.subset                             
+    # Assign group selection from argparse 
+    subset = args.subset
+    path = args.path
+    umbrella = args.umbrella
+    fig_path = args.fig_path
+    salt_bridge = args.salt_bridge
 
-    path_head = "/home/lf1071fu/project_b3"
-    fig_path = f"/home/lf1071fu/project_b3/figures/{ conform }"
-    if conform == "holo":
-        data_path = f"{ path_head }/simulate/holo_conf/data"
-    elif conform == "apo":
-        data_path = f"{ path_head }/simulate/apo_conf/initial_10us"
+    fig_path = get_fig_path(path, fig_path, umbrella)
+
+    if umbrella:
+        windows = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+        data_paths = [path + "/" + d for d in windows if d.startswith("window")]
     else: 
-        print("ERROR: chose a valid conform from command line analysis.")
-        sys.exit(1)    
+        data_paths = [path]  
 
-    t = md.load(f"{ data_path }/fitted_traj.xtc", top=f"{ data_path }/protein.gro")
+    for w, p in enumerate(data_paths):
 
-    if subset:
-        t = t.atom_slice(t.top.select('resid 180 to 254'))
+        if umbrella:
+            
+            traj_files = []
+            trajs = []
+            prev_time = 0
 
-    dssp = md.compute_dssp(t, simplified=False)
+            for run in np.arange(1,5):
+                traj_files.append(f"{ p }/run{ run }/fitted_traj.xtc") 
 
-    plot_dssp(dssp, subset, fig_path)
+            for f in traj_files:
+                traj = md.load(f, top=f"{ path }/protein.gro")
+                traj.time += prev_time
+                prev_time = traj.time[-1]
+
+                trajs.append(traj)
+
+            t = md.join(trajs)
+
+        else: 
+            print("Loading in trajectory...")
+            t = md.load(f"{ p }/fitted_traj.xtc", #stride=100, 
+                        top=f"{ path }/protein.gro")
+            print(t)
+
+        if salt_bridge:
+
+            t = t.atom_slice(t.top.select('resid 49 to 99 or resid 174 to 224'))
+
+        elif subset:
+
+            t = t.atom_slice(t.top.select('resid 179 to 253'))
+
+        print(t.time)
+        dssp = md.compute_dssp(t, simplified=False)
+
+        plot_dssp(dssp, t, subset, salt_bridge, fig_path, umbrella, w+1)
 
     return None
 
-def plot_dssp(dssp, subset, path):
+def get_fig_path(path, fig_path, umbrella):
+    if not fig_path:
+        if "holo" in path:
+            state = "holo"
+        elif "apo" in path:
+            state = "apo"
+        if "open" in path:
+            conform = "open"
+        elif "closed" in path:
+            conform = "closed"
+        if umbrella:
+            if not os.path.exists(f"{ path }/DSSP_plots"):
+                os.makedirs(f"{ path }/DSSP_plots")
+            return f"{ path }/DSSP_plots"
+        else: 
+            try:
+                fig_path = f"/home/lf1071fu/project_b3/figures/{ state }-{ conform }"
+                return fig_path
+            except AttributeError:
+                fig_path = path
+                return fig_path
+    elif fig_path and umbrella:
+        if not os.path.exists(f"{ fig_path }/DSSP_plots"):
+            os.makedirs(f"{ fig_path }/DSSP_plots")
+        return f"{ fig_path }/DSSP_plots"
+    else:
+        return fig_path
+
+def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w):
     """Make a plot of the secondary structure categories over a trajectory.
 
     Parameters
@@ -61,59 +135,132 @@ def plot_dssp(dssp, subset, path):
     dssp : np.ndarray
         A 2D array of the character codes of the secondary structure of each
         residue at each time frame; shape=(n_frames, n_residues).
+    time : np.ndarray
+        The simulation time corresponding to each frame, in picoseconds.
+    subset : boolean
+        Use a subset of the residues related to the beta and alpha flaps for 
+        constructing the DSSP plots?
+    salt_bridge: boolean 
+        Use a subset of the residues related to the salt bridge K57--E200 
+        for constructing the DSSP plots?
     path : str
         Path to the primary working directory.
+    umbrella : boolean
+        DSSP plot is based on four 25 ns runs in an umbrella window?
+    window : int
+        Number of the umbrella window.
 
     Returns
     -------
     None.
 
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
-
-    #codes = {"H" : "#fcba03", "E" : "#f556e0", "C" : "#0055cc"}
     codes = {"H" : 0, "B" : 1, "E" : 2, "G" : 3, "I" : 4, "T" : 5, "S" : 6,
              " " : 7, "C" : 8}
     codename = {0 : "alpha-helix", 1 : "beta-bridge", 2: "beta-strand",
                 3 : r"$3_{10}$-helix", 4 : "pi-helix", 5 : "turn", 6 : "bend",
                 7 : "loops", 8 : "coil"}
     dssp_colors = np.vectorize(codes.get)(dssp.T)
-    im = ax.imshow(dssp_colors, aspect='auto') #, cmap='rainbow')
-    micro_s = int(dssp.T.shape[1] / 1000)
-    values = np.unique(dssp_colors)
 
-    left, right = ax.get_xlim()
-    if subset:
-        ax.hlines([195-180,218-180], left, right, linestyles="dashed", lw=3, colors="#FF1990",
-            path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
-        ax.hlines([219.5-180,231-180], left, right, linestyles="dashed", lw=3, colors="#dba61f",
-            path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
-        ax.set_yticks(np.arange(1, 75, 10))
-        ax.set_yticklabels(np.arange(180, 255, 10))
+    if salt_bridge:
+        fig, axs = plt.subplots(2,1, sharex=True, constrained_layout=True, 
+                    figsize=(12,6))
+        ax1, ax2 = axs
+        im1 = ax1.imshow(dssp_colors[:50,:], aspect='auto') 
+        im2 = ax2.imshow(dssp_colors[50:,:], aspect='auto') 
+        values = np.unique(dssp_colors)
+        time = t.time
+        resids = [r.resSeq for r in t.topology.residues]
+        # Get the colors of the values, according to the colormap used by imshow
+        colors = [im1.cmap(im1.norm(value)) for value in values]
+        ax = ax2
+    else: 
+        fig, ax = plt.subplots(1, 1, constrained_layout=True, figsize=(12,4))
+        im = ax.imshow(dssp_colors, aspect='auto')
+        values = np.unique(dssp_colors)
+        time = t.time
+        resids = [r.resSeq for r in t.topology.residues]
+        # Get the colors of the values, according to the colormap used by imshow
+        colors = [im.cmap(im.norm(value)) for value in values]
 
-    # Plot settings
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.set_xticks(np.arange(0, micro_s * 1000 + 1, 1000))
-    ax.set_xticklabels(np.arange(0, micro_s + 1))
-    for i in ["top","bottom","left","right"]:
-        ax.spines[i].set_linewidth(2)
-    ax.set_xlabel("Time (µs)", labelpad=5, fontsize=24)
-    ax.set_ylabel("Residue Number", labelpad=5, fontsize=24)
-    # get the colors of the values, according to the colormap used by imshow
-    colors = [im.cmap(im.norm(value)) for value in values]
-    # create a patch (proxy artist) for every color
+    # Create a patch (proxy artist) for every color
     patches = [mpatches.Patch(color=colors[i], label=codename[i]) \
                 for i in range(len(values))]
+
+    if subset:
+        left, right = ax.get_xlim()
+        ax.hlines([195-180,218-180], left - 100, right + 100, linestyles="dashed", 
+            lw=3, colors="#D90000",
+            path_effects=[pe.Stroke(linewidth=5, foreground='#E8E9E8'), pe.Normal()])
+        ax.hlines([219.5-180,231-180], left - 100, right + 100, linestyles="dashed", 
+            lw=3, colors="#F93BFF",
+            path_effects=[pe.Stroke(linewidth=5, foreground='#E8E9E8'), pe.Normal()])
+        ax.set_yticks(np.arange(1, 75, 20))
+        ax.set_yticklabels(np.arange(180, 255, 20))
+        ax.set_ylabel("Residue Number", labelpad=5, fontsize=24)
+        ax.grid(False)
+    elif salt_bridge:
+        resids1 = [r.resSeq for r in t.topology.residues if r.resSeq < 150]
+        resids2 = [r.resSeq for r in t.topology.residues if r.resSeq > 150]
+        print(resids1,"\n",resids2)
+        ax1.set_yticks(np.arange(0, len(resids1), 25))
+        ax1.set_yticklabels(resids1[::25])
+        ax2.set_yticks(np.arange(0, len(resids2), 25))
+        ax2.set_yticklabels(resids2[::25])
+        ax1.grid(False)
+        ax2.grid(False)
+        shared_ylabel = fig.add_subplot(111, frameon=False, xticks=[], yticks=[])
+        shared_ylabel.yaxis.tick_left()
+        shared_ylabel.yaxis.set_label_coords(-0.5, 0)
+        shared_ylabel.yaxis.set_label_position("left")
+        shared_ylabel.set_ylabel("Residue Number", labelpad=75, fontsize=24)
+        ax1.tick_params(axis='y', labelsize=20, direction='inout', width=2, \
+                    length=10, pad=10)
+        ax1.tick_params(axis='x', labelsize=20, direction='inout', width=2, \
+                    length=10)
+    else:
+        ax.set_ylabel("Residue Number", labelpad=5, fontsize=24)
+        ax.grid(False)
+
+    # Plot settings
+    ax.tick_params(axis='y', labelsize=20, direction='inout', width=2, \
+                    length=10, pad=10)
+    ax.tick_params(axis='x', labelsize=20, direction='inout', width=2, \
+                    length=10, pad=10)
+    # for i in ["top","bottom","left","right"]:
+    #     ax.spines[i].set_linewidth(2)
     plt.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc=2,
                borderaxespad=0., fontsize=18)
 
-    if subset:
-        plt.savefig(f"{ path }/dssp_flaps.pdf", dpi=300)
+    # X-axis labels
+    if time[-1] > 1e6:
+        frames = dssp.T.shape[1]
+        xticks = np.arange(0,frames+1,frames/10)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e6,1)), time[::len(time) // 10])))
+        ax.set_xlabel("Time (µs)", labelpad=5, fontsize=28)
+    elif umbrella:
+        xticks = np.arange(0,100e2+1,25e2)
+        ax.set_xticks(xticks)
+        c = ax.set_xticklabels(list(map(lambda x : str(x/1e2).split(".")[0], xticks)))
+        ax.set_xlabel("Time (ns)", labelpad=5, fontsize=28)
+        bottom, top = ax.get_ylim()
+        ax.vlines(np.arange(25e2,100e2,25e2), bottom, top, ls="dashed", lw=3, colors="#194D33",
+            path_effects=[pe.Stroke(linewidth=5, foreground='#E8E9E8'), pe.Normal()])
+        plt.title(f"Window { w }", fontsize=24)
     else:
-        plt.savefig(f"{ path }/dssp.pdf", dpi=300)
+        frames = dssp.T.shape[1]
+        xticks = np.arange(0,frames+1,frames/10)
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], time[::len(time) // 10])))
+        ax.set_xlabel("Time (ns)", labelpad=5, fontsize=24)
+
+    if umbrella:
+        plt.savefig(f"{ path }/dssp_{ w }.png", dpi=300)
+    elif subset:
+        plt.savefig(f"{ path }/dssp_flaps.png", dpi=300)
+    else:
+        plt.savefig(f"{ path }/dssp.png", dpi=300)
     plt.close()
 
     return None
