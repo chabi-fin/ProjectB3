@@ -32,6 +32,11 @@ def main(argv):
                             dest = "fig_path",
                             default = False,
                             help = """Set a path destination for the figure.""")
+        parser.add_argument("-t", "--topol",
+                            action = "store",
+                            dest = "topol",
+                            default = "protein.gro",
+                            help = """File name for topology, inside the path directory.""")   
         parser.add_argument("-b", "--bridge",
                             action = "store_true",
                             dest = "salt_bridge",
@@ -49,8 +54,7 @@ def main(argv):
     umbrella = args.umbrella
     fig_path = args.fig_path
     salt_bridge = args.salt_bridge
-
-    fig_path = get_fig_path(path, fig_path, umbrella)
+    topol = args.topol
 
     if umbrella:
         windows = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
@@ -67,10 +71,10 @@ def main(argv):
             prev_time = 0
 
             for run in np.arange(1,5):
-                traj_files.append(f"{ p }/run{ run }/fitted_traj.xtc") 
+                traj_files.append(f"{ p }/run{ run }/fitted_traj_100.xtc") 
 
             for f in traj_files:
-                traj = md.load(f, top=f"{ path }/protein.gro")
+                traj = md.load(f, top=f"{ path }/{ topol }")
                 traj.time += prev_time
                 prev_time = traj.time[-1]
 
@@ -80,8 +84,8 @@ def main(argv):
 
         else: 
             print("Loading in trajectory...")
-            t = md.load(f"{ p }/fitted_traj.xtc", #stride=100, 
-                        top=f"{ path }/protein.gro")
+            t = md.load(f"{ p }/fitted_traj_100.xtc", #stride=100, 
+                        top=f"{ path }/{ topol }")
             print(t)
 
         if salt_bridge:
@@ -93,41 +97,16 @@ def main(argv):
             t = t.atom_slice(t.top.select('resid 179 to 253'))
 
         print(t.time)
+        apo = True
+        if "ip6" in topol:
+            apo = False
         dssp = md.compute_dssp(t, simplified=False)
 
-        plot_dssp(dssp, t, subset, salt_bridge, fig_path, umbrella, w+1)
+        plot_dssp(dssp, t, subset, salt_bridge, fig_path, umbrella, w+1, apo)
 
     return None
 
-def get_fig_path(path, fig_path, umbrella):
-    if not fig_path:
-        if "holo" in path:
-            state = "holo"
-        elif "apo" in path:
-            state = "apo"
-        if "open" in path:
-            conform = "open"
-        elif "closed" in path:
-            conform = "closed"
-        if umbrella:
-            if not os.path.exists(f"{ path }/DSSP_plots"):
-                os.makedirs(f"{ path }/DSSP_plots")
-            return f"{ path }/DSSP_plots"
-        else: 
-            try:
-                fig_path = f"/home/lf1071fu/project_b3/figures/{ state }-{ conform }"
-                return fig_path
-            except AttributeError:
-                fig_path = path
-                return fig_path
-    elif fig_path and umbrella:
-        if not os.path.exists(f"{ fig_path }/DSSP_plots"):
-            os.makedirs(f"{ fig_path }/DSSP_plots")
-        return f"{ fig_path }/DSSP_plots"
-    else:
-        return fig_path
-
-def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w):
+def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w, apo):
     """Make a plot of the secondary structure categories over a trajectory.
 
     Parameters
@@ -160,7 +139,12 @@ def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w):
     codename = {0 : "alpha-helix", 1 : "beta-bridge", 2: "beta-strand",
                 3 : r"$3_{10}$-helix", 4 : "pi-helix", 5 : "turn", 6 : "bend",
                 7 : "loops", 8 : "coil"}
-    dssp_colors = np.vectorize(codes.get)(dssp.T)
+    if apo:
+        dssp = dssp.T
+    else:
+        dssp = dssp.T[:-1,:]
+    print(dssp.shape)
+    dssp_colors = np.vectorize(codes.get)(dssp)
 
     if salt_bridge:
         fig, axs = plt.subplots(2,1, sharex=True, constrained_layout=True, 

@@ -34,7 +34,7 @@ def main(argv):
         parser.add_argument("-b", "--blocks",
                             action = "store",
                             dest = "nblocks",
-                            default = 50,
+                            default = 100,
                             help = """Number of blocks to use in bootstrap analysis.""")            
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
@@ -57,7 +57,7 @@ def main(argv):
     nb = int(args.nblocks) # number of blocks for dividing data into blocks for bootstrapping
     cv = args.cv # descriptor for collective variable used for biasing
     nw = 20 # number of windows (number of simulations) 
-    bs = 100 # number of bootstraps
+    bs = 500 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
     if not data_path:
         data_path = os.getcwd()

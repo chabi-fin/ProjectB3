@@ -2,79 +2,112 @@ import sys
 import numpy as np
 import os
 import argparse
+import config.settings as c
+from tools import utils, traj_funcs
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import MDAnalysis as mda
-from MDAnalysis.analysis import rms, align, dihedrals, contacts, distances, \
-                                hydrogenbonds
+from MDAnalysis.analysis import rms, align, dihedrals, contacts, \
+                                distances, hydrogenbonds
 from MDAnalysis.analysis.distances import distance_array
 import pandas as pd
 
 def main(argv):
     """Perform analysis for individual simulations.
 
-    Calculations are generally stored as npy arrays which can be combined with other 
-    simulations data in combination type analysis. The command line arguements are used to 
-    select a particular simulation from the given options. 
+    Calculations are generally stored as npy arrays which can be combined 
+    with other simulations data in combination type analysis. The command
+    line arguements are used to select a particular simulation from the 
+    given options. 
     """
 
     try:
         parser = argparse.ArgumentParser()
 
-        parser.add_argument("-c", "--conform",
+        parser.add_argument("-p", "--path",
                             action = "store",
-                            dest = "conform",
-                            default = "open",
-                            help = """Chose a conformer for analysis i.e. "open" or "closed".""")
+                            dest = "path",
+                            default = "unbiased_sims/apo_open/nobackup",
+                            help = "Set path to the data directory.")
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
-                            help = """Chose whether the trajectory arrays should  be recomputed.""")
+                            help = ("Chose whether the trajectory "
+                                "arrays should be recomputed."))
         parser.add_argument("-s", "--state",
                             action = "store",
                             dest = "state",
                             default = "apo",
-                            help = """Chose the type of simulation i.e. "holo" or "apo" or in the case of mutational, "K57G" etc.""")
+                            help = ("Chose the type of simulation i.e." 
+                                "'holo' or 'apo' or in the case of "
+                                "mutational, 'K57G' etc."))
+        parser.add_argument("-f", "--figpath",
+                            action = "store",
+                            dest = "figpath",
+                            default = None,
+                            help = ("Set a path destination for the "
+                                "figure."))    
+        parser.add_argument("-t", "--topol",
+                            action = "store",
+                            dest = "topol",
+                            default = "topol_protein.top",
+                            help = ("File name for topology, inside the " 
+                                "path directory."))   
+        parser.add_argument("-x", "--xtc",
+                            action = "store",
+                            dest = "xtc",
+                            default = "fitted_traj_100.xtc",
+                            help = ("File name for trajectory, inside "
+                                "the path directory."))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
-        print("Command line arguments are ill-defined, please check the arguments")
+        print("Command line arguments are ill-defined, please check the " 
+            "arguments")
         raise
 
-    global conform, recalc, state, path_head, fig_path, data_path, np_files, analysis_path
+    global conform, recalc, state, fig_path, data_path, np_files, analysis_path
 
     # Assign group selection from argparse
-    conform = args.conform
     recalc = args.recalc
     state = args.state
+    data_path = f"{ c.data_head }/{ args.path }"
+    fig_path = f"{ c.figure_head }/{ args.figpath }"
+    topol = f"{ data_path }/{ args.topol }"
+    xtc = f"{ data_path }/{ args.xtc }"
 
-    path_head = "/home/lf1071fu/project_b3"
+    # Check if topology file exists
+    if not os.path.exists(topol):
+        with open(f"{ data_path }/topol.top", "r") as file:
+            lines = file.readlines()
 
-    data_path, fig_path = get_sim_paths()
+        # Otherwise, generate topology without solvent or counterions
+        filtered_lines = [line for line in lines if \
+                          all(not line.startswith(s) \
+                          for s  in ["SOL", "NA", "CL"])]
+        with open(topol, 'w') as file:
+            file.writelines(filtered_lines)
 
-    # Load in universe objects for the simulation and the reference structures
-    u = mda.Universe(f"{ data_path }/topol_protein.top", f"{ data_path }/fitted_traj.xtc",
-                        topology_format='ITP')
-
-    open_state = mda.Universe(f"{ path_head }/structures/open_ref_state.pdb")
-    closed_state = mda.Universe(f"{ path_head }/structures/closed_ref_state.pdb")
+    # Load in universe objects for the simulation and the reference
+    # structures
+    u = mda.Universe(topol, xtc, topology_format='ITP')
+    open_state = mda.Universe(f"{ c.struct_head }/open_ref_state.pdb")
+    closed_state = mda.Universe(f"{ c.struct_head }/closed_ref_state.pdb")
+    
     # Starting structure as the ref state
-    ref_state = u.select_atoms("protein")
+    ref_state = mda.Universe(f"{ c.struct_head }/alignment_struct.pdb")
 
     # Indicies of the inflexible residues
-    core_res, core = get_core_res()
-
-    # Atom group selection strings
-    beta_flap_group = "backbone and (resid 195-218 or resid 739-762)"
-    alpha_flap_group = "backbone and (resid 219-231 or resid 763-775)"
-    combo_group = "backbone and (resid 195-231 or resid 739-775)"
+    core_res, core = traj_funcs.get_core_res()
 
     # Store calculated outputs as numpy arrays
     analysis_path = f"{ os.path.dirname(data_path) }/analysis"
     if not os.path.exists(analysis_path):
         os.makedirs(analysis_path)
-    print(f"data path : { data_path }\nfig path : { fig_path }\nanalysis path : { analysis_path }")
+    print(f"data path : { data_path }\n"
+        f"fig path : { fig_path }\n"
+        f"analysis path : { analysis_path }")
 
     # Analysis files stored as numpy arrays
     np_files = {"R_open" : f"{ analysis_path }/rmsd_open.npy", 
@@ -108,26 +141,39 @@ def main(argv):
             "EVALUATING WITH MDANALYSIS"
         )
 
+        # Load in the trajectory and do alignment
         u.transfer_to_memory()
+        u = traj_funcs.do_alignment(u)
 
-        align.AlignTraj(u, ref_state, select=core, in_memory=True).run()
-
+        # Write out snapshots every 1µs to a pdb file
         protein = u.select_atoms("protein")
-        with mda.Writer(f"{ analysis_path }/snap_shots.pdb", protein.n_atoms) as W:
+        with mda.Writer(f"{ analysis_path }/snap_shots.pdb", 
+                        protein.n_atoms) as W:
             for ts in u.trajectory:
                 if ((ts.time % 1000000) == 0):
                     W.write(protein)
 
         # Determine RMSD to ref structures
-        arrs["R_open"] = get_rmsd(u, open_state, core, ["backbone and resid 8:251",
-                          beta_flap_group, alpha_flap_group, combo_group], "open")
-        arrs["R_closed"] = get_rmsd(u, closed_state, core, ["backbone and resid 8:251",
-                          beta_flap_group, alpha_flap_group, combo_group], "closed")
+        arrs["R_open"] = get_rmsd(u, open_state, core, 
+                            ["backbone and resid 8:251", 
+                            c.beta_flap_group, 
+                            c.alpha_flap_group],
+                            "open")
+        arrs["R_closed"] = get_rmsd(u, closed_state, core, 
+                            ["backbone and resid 8:251",
+                            c.beta_flap_group, 
+                            c.alpha_flap_group], 
+                            "closed")
 
-        # Determine RMSF by first finding and aligning to the average structure
-        arrs["calphas"], arrs["rmsf"] = get_rmsf(u, f"{ data_path }/topol_protein.top", core_res)
+        # Determine RMSF by first finding and aligning to the average 
+        # structure
+        print(np_files)
+        arrs["calphas"], arrs["rmsf"] = get_rmsf(u, 
+                                            f"{ data_path }/topol_protein.top",
+                                            core_res)
 
-        # Determine the radius of gyration and extract a time series of the simulation
+        # Determine the radius of gyration and extract a time series of
+        # the simulation
         arrs["r_gyr"], arrs["time_ser"] = get_rgyr(u)
 
         # Phi and Psi backbone dihedrals
@@ -174,93 +220,6 @@ def main(argv):
 
     return None
 
-def get_sim_paths():
-    """Get the relevant paths for the experiment.
-
-    Paths need to be added manually to the dictionary in order to make use of
-    data within the paths. Includes a check to verify the paths exist. 
-
-    Returns
-    -------
-    data_path : str
-        Path to the directory in which trajectory data is stored.
-    fig_path : str
-        Path to the directory in which analysis plots should be saved.
-
-    """
-    # Include explicit data and figure paths
-    paths = {
-        "apo-open" : (f"{ path_head }/simulate/apo_state/open/data", 
-                        f"{ path_head }/figures/apo-open"),
-        "apo-closed" : (f"{ path_head }/simulate/apo_state/closed/data", 
-                        f"{ path_head }/figures/apo-closed"),
-        "holo-open" : (f"{ path_head }/simulate/holo_state/open/data", 
-                        f"{ path_head }/figures/holo-open"),
-        "holo-closed" : (f"{ path_head }/simulate/holo_state/closed/data", 
-                        f"{ path_head }/figures/holo-closed"),
-        "K57G-open" : (f"{ path_head }/simulate/mutation/K57G_o/nobackup", 
-                        f"{ path_head }/figures/mutation/K57G_o"),
-        "K57G-closed" : (f"{ path_head }/simulate/mutation/K57G_c", 
-                        f"{ path_head }/figures/mutation/K57G_c"),
-        "LYN57-open" : (f"{ path_head }/simulate/mutation/LYN57_o/nobackup", 
-                        f"{ path_head }/figures/mutation/LYN57_o"),
-        "LYN57-closed" : (f"{ path_head }/simulate/mutation/LYN57_c/nobackup", 
-                        f"{ path_head }/figures/mutation/LYN57_c"),
-        "LYS57-open" : (f"{ path_head }/simulate/mutation/LYS57_o/nobackup", 
-                        f"{ path_head }/figures/mutation/LYS57_o"), 
-        "LYS57-closed" : (f"{ path_head }/simulate/mutation/LYS57_c/nobackup", 
-                        f"{ path_head }/figures/mutation/LYS57_c"),
-        "double-closed" : (f"{ path_head }/simulate/mutation/double_mutant", 
-                        f"{ path_head }/figures/mutation/double_mut"),
-    }
-
-    # Check that paths exist and assign to var
-    for path in paths[f"{ state }-{ conform }"]:
-        if os.path.exists(path):
-            data_path, fig_path = paths[f"{ state }-{ conform }"]
-        else:
-            print(f"The path '{ path }' does not exist. Chose a valid state and conformation combination from the command-line arguements.")
-            sys.exit(1)
-
-    return data_path, fig_path
-
-def get_core_res(recalc=False):
-    """Finds the core residues which are immobile across the conformational states.
-
-    Uses data from the combined simulation of the apo states open and closed simulations,
-    to get the calphas of the residues with an RMSF below 1.5.
-
-    Parameters
-    ----------
-    recalc : boolean
-        Indicates whether the core_res array should be redetermined.
-
-    Returns
-    -------
-    core_res : nd.array
-        Indicies for the less mobile residues across conformational states. 
-    core : str
-        Selection string for the core residues.
-
-    """
-    core_res_path = f"{ path_head }/simulate/apo_state/open/data"
-    if not os.path.exists(f"{ core_res_path }/core_res.npy") or recalc:
-        top = f"{ core_res_path }/topol.top"
-        a = mda.Universe(top, f"{ core_res_path }/simulate/holo_conf/data/full_holo_apo.xtc",
-                         topology_format="ITP")
-        calphas, rmsf = get_rmsf(a, top, core_res_path)
-        core_res = calphas[(rmsf < 1.5)]
-        np.save(f"{ core_res_path }/core_res.npy", core_res)
-    else:
-        core_res = np.load(f"{ core_res_path }/core_res.npy")
-
-    aln_str = "protein and name CA and ("
-    core_open = [f"resid {i} or " for i in core_res]
-    core_closed = [f"resid {i + 544} or " for i in core_res]
-    core = aln_str + "".join((core_open + core_closed))[:-4] + ")"
-
-    return core_res, core
-
 def get_rmsd(system, reference, alignment, group, ref_state):
     """Determines the rmsd over the trajectory against a reference structure.
 
@@ -303,7 +262,7 @@ def get_rmsd(system, reference, alignment, group, ref_state):
 
     return rmsd_arr
 
-def get_rmsf(u, top, core_res):
+def get_rmsf(u, top, core_res, get_core=False):
     """Determines the RMSF per residue.
 
     The average structure is calculated and then used as the reference for
@@ -346,8 +305,10 @@ def get_rmsf(u, top, core_res):
 
     rmsfer = RMSF(calphas).run()
 
-    np.save(np_files["calphas"], calphas.resnums)
-    np.save(np_files["rmsf"], rmsfer.results.rmsf)
+    if not get_core:
+
+        np.save(np_files["calphas"], calphas.resnums)
+        np.save(np_files["rmsf"], rmsfer.results.rmsf)
 
     return calphas.resnums, rmsfer.results.rmsf
 
@@ -652,8 +613,10 @@ def plot_rmsd(r_open, r_closed, time_ser):
     ax.set_ylim(0,15)
 
     plt.legend(fontsize=28)
+    print(type(fig))
 
-    plt.savefig(f"{ fig_path }/rmsd_2D.png", dpi=300)
+    #plt.savefig(f"{ fig_path }/rmsd_2D.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/rmsd_2D.png")
     plt.close()
 
     return None
@@ -699,12 +662,12 @@ def plot_rmsf(calphas, rmsf):
               colors="#dba61f")
     ax.set_ylim(-1,10)
 
-    plt.savefig(f"{ fig_path }/rmsf.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/rmsf.png")
     plt.close()
 
     return None
 
-def plot_rmsd_time(rmsd, time_ser, ref_state):
+def plot_rmsd_time(rmsd, time_ser, ref_state, stride=10):
     """Makes a time series of the RMSD against a reference.
 
     The RMSD is shown for the protein backbone as well as the backbone of the
@@ -726,7 +689,6 @@ def plot_rmsd_time(rmsd, time_ser, ref_state):
 
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(24,8))
-    stride = 10
     #plt.plot(time, rmsd[:,2], lw=2, color="#02ab64", alpha=0.8,
     #         label="core")
     plt.plot(time_ser[::stride], rmsd[:,5][::stride], lw=3, color="#02ab64", alpha=0.8,
@@ -760,7 +722,7 @@ def plot_rmsd_time(rmsd, time_ser, ref_state):
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=28)
 
-    plt.savefig(f"{ fig_path }/rmsd_time_{ ref_state }.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/rmsd_time_{ ref_state }.png")
     plt.close()
 
     return None
@@ -819,7 +781,7 @@ def plot_ramachandran(phis, psis, res):
     plot_path = f"{ fig_path }/ramachandran"
     if not os.path.exists(plot_path):
        os.makedirs(plot_path)
-    plt.savefig(f"{ plot_path }/res_{ res.resid }.png", dpi=300)
+    utils.save_figure(fig, f"{ plot_path }/res_{ res.resid }.png")
     plt.close()
 
     return None
@@ -864,7 +826,7 @@ def plot_chi1(res, chi_1):
     plot_path = f"{ fig_path }/chi_1s"
     if not os.path.exists(plot_path):
        os.makedirs(plot_path)
-    plt.savefig(f"{ plot_path }/res_{ res.resid }.png", dpi=300)
+    utils.save_figure(fig, f"{ plot_path }/res_{ res.resid }.png")
     plt.close()
 
     return None
@@ -892,7 +854,7 @@ def plot_salt_frac(sc, time_ser):
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
     ave_contacts = np.mean(sc[:, 1])
     print(f"average contacts = { ave_contacts }")
-    stride = 10
+    stride = 1
 
     ax.scatter(time_ser[::stride], sc[::stride, 1], s=150, color="#00C27B")
 
@@ -918,7 +880,7 @@ def plot_salt_frac(sc, time_ser):
     ax.set_ylabel(r"Fraction of Native Contacts", labelpad=5, fontsize=24)
     plt.ylim([0, 1])
 
-    plt.savefig(f"{ fig_path }/salt_contacts.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/salt_contacts.png")
     plt.close()
 
     return None
@@ -939,7 +901,7 @@ def plot_hbonds_count(hbond_count, time_ser):
 
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
-    stride = 10
+    stride = 1
 
     plt.scatter(time_ser[::stride], hbond_count[::stride], s=150, color="#00C27B")
 
@@ -965,12 +927,12 @@ def plot_hbonds_count(hbond_count, time_ser):
     ax.set_ylabel(r"$N_{HB}$", labelpad=5, fontsize=24)
     plt.ylim([0,100])
 
-    plt.savefig(f"{ fig_path }/hbonds_count.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/hbonds_count.png")
     plt.close()
 
     return None
 
-def plot_rgyr(r_gyr, time_ser):
+def plot_rgyr(r_gyr, time_ser, stride=10):
     """Makes a timeseries of the radius of gyration.
 
     The radius of gyration is a measure of how compact the 
@@ -986,7 +948,6 @@ def plot_rgyr(r_gyr, time_ser):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(24,8))
 
-    stride = 10
     plt.plot(time_ser[::stride], r_gyr[::stride], "--", lw=3, color="#02ab64", label=r"$R_G$")
 
     # Plot settings
@@ -1013,12 +974,12 @@ def plot_rgyr(r_gyr, time_ser):
     ax.set_ylabel(r"Radius of Gyration $R_G$ ($\AA$)", labelpad=5, fontsize=38)
     plt.legend(fontsize=28)
 
-    plt.savefig(f"{ fig_path }/rad_gyration.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/rad_gyration.png")
     plt.close()
 
     return None
 
-def plot_bridges(salt_dist, time_ser):
+def plot_bridges(salt_dist, time_ser, stride=10):
     """Makes a time series plot of the distances of notable bridges.
 
     The plot includes a dotted line to indicate the upper limit of a typical 
@@ -1039,7 +1000,6 @@ def plot_bridges(salt_dist, time_ser):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    stride = 10
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
     labels = [r"$\alpha - \beta \:$ R208$-$E222",
               r"$\alpha - \beta \:$ K227$-$D213",
@@ -1081,12 +1041,12 @@ def plot_bridges(salt_dist, time_ser):
     ax.set_xlim(0,xmax)
     plt.legend(fontsize=24, ncol=2)
 
-    plt.savefig(f"{ fig_path }/salt_bridges.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/salt_bridges.png")
     plt.close()
 
     return None
 
-def plot_hbond_pairs(hpairs, time_ser):
+def plot_hbond_pairs(hpairs, time_ser, stride=10):
     """Makes a time series plot of the distances of notable H-bonding pairs.
 
     The plot includes a dotted line to indicate the upper limit of a typical 
@@ -1107,7 +1067,6 @@ def plot_hbond_pairs(hpairs, time_ser):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    stride = 10
     colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd"]
     labels = [r"N204$-$R208", r"S231$-$R209",
               r"N197$-$R209", r"N53$-$E200"]
@@ -1146,7 +1105,7 @@ def plot_hbond_pairs(hpairs, time_ser):
     ax.set_xlim(0,xmax)
     plt.legend(fontsize=24, ncol=2)
 
-    plt.savefig(f"{ fig_path }/hpairs.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/hpairs.png")
     plt.close()
 
     return None

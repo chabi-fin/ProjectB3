@@ -17,12 +17,14 @@ def main(argv):
                             action = "store_true",
                             dest = "recalc",
                             default = False,
-                            help = """Chose whether the trajectory arrays should  be recomputed.""")
+                            help = ("""Chose whether the trajectory """
+                                    """arrays should  be recomputed."""))
         parser.add_argument("-c", "--coordinate",
                             action = "store",
                             dest = "rxn_coord",
                             default = "beta_vec_open",
-                            help = """Select the desired reaction coordinate, e.g. "beta_vec_open" or "beta_vec_closed".""")
+                            help = ("""Select the desired reaction coordinate, """
+                                    """e.g. "beta_vec_open" or "beta_vec_closed"."""))
 
         args = parser.parse_args()
 
@@ -41,9 +43,12 @@ def main(argv):
     points = pd.read_csv(f"{ home }/select_initial_struct.csv")
 
     # Initialize DataFrames for trajectory data
-    rad_gyr = pd.DataFrame()
-    rmsd_open = pd.DataFrame()
-    rmsd_closed = pd.DataFrame()
+    # How to convert these three so they are just one table?# 
+    multi = pd.MultiIndex.from_product([[str(i) for i in range(1, 21)], ["CV", 
+                                "Rad Gyr", "RMSD open beta", "RMSD open alpha", 
+                                "RMSD closed beta", "RMSD closed alpha"]], 
+                                names=["Window", "Property"])
+    window_timesers = pd.DataFrame(columns=multi, index=np.arange(1,10004))
 
     if recalc or not all(list(map(lambda x : os.path.exists(x), 
         [f"{ home }/averages.csv", f"{ home }/rad_gyrs.csv",
@@ -69,20 +74,24 @@ def main(argv):
         for window in np.arange(1,21):
 
             beta_vec = np.array([])
-            for r in range(1,5): 
+            for r in range(4): 
                 if rxn_coord == "beta_vec_closed":
-                    temp = np.loadtxt(f"{ home }/window{ window }/run{ r }/COLVAR_250.dat")
-                    beta_vec = np.concatenate((beta_vec, temp[::10,2]))
+                    temp = np.loadtxt(f"{ home }/window{ window }/run{ r+1 }/COLVAR_250.dat")
+                    window_timesers.loc[start:end, (str(window), "CV")] = temp[::10,2]
                 elif rxn_coord == "beta_vec_open":
-                    temp = np.loadtxt(f"{ home }/window{ window }/run{ r }/COLVAR.dat")
-                    beta_vec = np.concatenate((beta_vec, temp[::10,1]))
+                    temp = np.loadtxt(f"{ home }/window{ window }/run{ r+1 }/COLVAR.dat")
+                    window_timesers.loc[start:end, (str(window), "CV")] = temp[::10,1]
+            #window_timesers.loc[:,(str(window), "CV")] = beta_vec
             rad_gs = np.zeros(10004)
             R_opens = np.zeros((10004, 2))
             R_closeds = np.zeros((10004, 2))
 
+            print(window_timesers)
+            sys.exit(1)
+
             for run in range(1,5):
 
-                start = (run - 1)*2501
+                start = (run - 1) * 2501
                 end = run * 2501
                 run_path = f"{ home }/window{ window }/run{ run }"
 
@@ -111,26 +120,22 @@ def main(argv):
 
                 c += 1
 
-            rad_gyr_new = pd.DataFrame({f"Window_{ window }_C" : beta_vec,
-                                        f"Window_{ window }_rg" : rad_gs})
-            rmsd_open_new = pd.DataFrame({f"Window_{ window }_C" : beta_vec,
-                                        f"Window_{ window }_R_beta" : R_opens[:,0],
-                                        f"Window_{ window }_R_alpha" : R_opens[:,1]})
-            rmsd_closed_new = pd.DataFrame({f"Window_{ window }_C" : beta_vec,
-                                        f"Window_{ window }_R_beta" : R_closeds[:,0],
-                                        f"Window_{ window }_R_alpha" : R_closeds[:,1]})
+            ## CONVERT TO MULTIINDEX -- ANOTHER KEY FOR THE WINDOW
+            
+            window_timesers_new = pd.DataFrame({f"CV" : beta_vec,
+                                        f"Rad Gyr" : rad_gs,
+                                        f"RMSD open beta" : R_opens[:,0],
+                                        f"RMSD open alpha" : R_opens[:,1],
+                                        f"RMSD closed beta" : R_closeds[:,0],
+                                        f"RMSD closed alpha" : R_closeds[:,1]})
 
-            rad_gyr = pd.concat([rad_gyr, rad_gyr_new], axis=1)
-            rmsd_open = pd.concat([rmsd_open, rmsd_open_new], axis=1)
-            rmsd_closed = pd.concat([rmsd_closed, rmsd_closed_new], axis=1)
+            window_timesers = pd.concat([window_timesers, window_timesers_new], axis=1)
 
         print("RMSD Open", rmsd_open)
         print("RMSD Closed", rmsd_closed)
 
         df.to_csv(f"{ home }/averages.csv")
-        rad_gyr.to_csv(f"{ home }/rad_gyrs.csv")
-        rmsd_open.to_csv(f"{ home }/rmsd_open.csv")
-        rmsd_closed.to_csv(f"{ home }/rmsd_closed.csv")
+        window_timesers.to_csv(f"{ home }/window_timesers.csv")
 
     else: 
 

@@ -18,7 +18,7 @@ def main(argv):
                             action = "store",
                             nargs='+',
                             dest = "path",
-                            default = "/home/lf1071fu/project_b3/simulate/holo_state/open/data /home/lf1071fu/project_b3/simulate/holo_state/closed/data",
+                            default = "/home/lf1071fu/project_b3/simulate/unbiased_sims/holo_open/nobackup /home/lf1071fu/project_b3/simulate/unbiased_sims/holo_closed/nobackup",
                             help = """Set path to the data directory.""")
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
@@ -70,12 +70,12 @@ def get_core_res(recalc=False):
         Selection string for the core residues.
 
     """
-    core_res_path = f"{ path_head }/simulate/apo_state/open/data"
+    core_res_path = f"{ path_head }/simulate/unbiased_sims"
     if not os.path.exists(f"{ core_res_path }/core_res.npy") or recalc:
-        top = f"{ core_res_path }/topol.top"
-        a = mda.Universe(top, f"{ core_res_path }/simulate/holo_conf/data/full_holo_apo.xtc",
+        top = f"{ core_res_path }/apo_open/topol.top"
+        a = mda.Universe(top, f"{ core_res_path }/full_apo.xtc",
                          topology_format="ITP")
-        calphas, rmsf = get_rmsf(a, top, core_res_path)
+        calphas, rmsf = get_rmsf(a, top, core_res_path, get_core=True)
         core_res = calphas[(rmsf < 1.5)]
         np.save(f"{ core_res_path }/core_res.npy", core_res)
     else:
@@ -98,7 +98,8 @@ def get_datas(data_paths, recalc):
 
     for path in data_paths:
 
-        analysis_path = f"{ path }/analysis"
+        print(path)
+        analysis_path = f"{ os.path.dirname(path) }/analysis"
         if not os.path.exists(analysis_path):
             os.makedirs(analysis_path)
 
@@ -131,7 +132,7 @@ def get_datas(data_paths, recalc):
                     file.writelines(filtered_lines)
 
             # Load in universe objects for the simulation and the reference structures
-            u = mda.Universe(topol, f"{ path }/fitted_traj.xtc",
+            u = mda.Universe(topol, f"{ path }/fitted_traj_100.xtc",
                             topology_format='ITP')
 
             align.AlignTraj(u, u.select_atoms("protein"), select=core, in_memory=True).run()
@@ -167,8 +168,8 @@ def plot_coms(data_paths, datas, fig_path):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
     labels = ["open conf", "closed conf"]
-    labels = ["str1", "str2", "str3"]
-    stride = 50
+    colors = ["#EAAFCC", "#A1DEA1"]
+    stride = 5
     i = 0
 
     for p in data_paths:
@@ -177,7 +178,7 @@ def plot_coms(data_paths, datas, fig_path):
         time_ser = arrs["time_ser"]
         com_dist = arrs["COM_dist"]
 
-        plt.plot(time_ser[::stride], com_dist[::stride], "-", lw=3, label=labels[i], alpha=0.8,
+        plt.plot(time_ser[::stride], com_dist[::stride], "-", lw=3, color=colors[i], label=labels[i], alpha=0.8,
             path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
 
         i += 1
@@ -188,11 +189,11 @@ def plot_coms(data_paths, datas, fig_path):
     if time_ser[-1] > 1e6:
         # Use microseconds for time labels
         ax.set_xlabel(r'Time ($\mu$s)', fontsize=24, labelpad=5)
-        ax.set_xticklabels(list(map(lambda x : str(x/1e6).split(".")[0], xticks)))
+        ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e6,1)), xticks)))
     else:
         # Use nanoseconds for time labels
         ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
-        ax.set_xticklabels(list(map(lambda x : str(x/1e3).split(".")[0], xticks)))
+        ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e3,1)), xticks)))
 
     ax.set_ylabel(r"Distance ($\AA$)", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)

@@ -7,7 +7,6 @@ import MDAnalysis as mda
 from MDAnalysis.analysis import align, pca
 import pandas as pd
 import seaborn as sns
-import nglview as nv
 
 def main(argv):
 
@@ -20,124 +19,151 @@ def main(argv):
     						dest = "group",
     						default = "beta-flap",
     						help = "Choose the subgroup for PCA. Options = backbone, "\
-                                    "alpha-flap, beta-flap, alpha-beta-flap. "\
-                                    "Default = beta-flap")
+                                    "alpha-flap, beta-flap, calphas, Default = beta-flap")
+        parser.add_argument("-p", "--path",
+                            action = "store",
+                            dest = "path",
+                            default = "/home/lf1071fu/project_b3/simulate/unbiased_sims/apo_open/nobackup",
+                            help = """Set path to the data directory.""")
+        parser.add_argument("-f", "--fig_path",
+                            action = "store",
+                            dest = "fig_path",
+                            default = "/home/lf1071fu/project_b3/figures/unbiased_sims/apo_open",
+                            help = """Set path to the data directory.""")
+        parser.add_argument("-t", "--topol",
+                            action = "store",
+                            dest = "topol",
+                            default = "topol_protein.top",
+                            help = """File name for topology, inside the path directory.""")   
+        parser.add_argument("-x", "--xtc",
+                            action = "store",
+                            dest = "xtc",
+                            default = "fitted_traj.xtc",
+                            help = """File name for trajectory, inside the path directory.""")     
         parser.add_argument("-c", "--conform",
                             action = "store",
                             dest = "conform",
-                            default = "holo",
-                            help = """Chose a conformer for analysis. I.e. "holo" or "apo".""")
+                            default = "open",
+                            help = """The reference conformational state, i.e. "open" or "closed".""")
         args = parser.parse_args()
 
     except argparse.ArgumentError:
     	print("Command line arguments are ill-defined, please check the arguments")
     	raise
 
+    global path_head
+
     # Assign group selection from argparse
+    data_path = args.path
     group = args.group
     conform = args.conform
+    topol = args.topol
+    xtc = args.xtc
+    fig_path = args.fig_path
 
     # Set up paths
     path_head = "/home/lf1071fu/project_b3"
-    if conform == "holo": 
-        path = f"{ path_head }/simulate/holo_conf/data"
-        fig_path = f"{ path_head }/figures/holo/pca"
-    elif conform == "apo":
-        path = f"{ path_head }/simulate/apo_conf/initial_10us"
-        fig_path = f"{ path_head }/figures/apo/pca"
-    else:
-        print("Select either holo or apo conformer using the command line arguement '-c'.")
-        sys.exit(1)
     struct_path = f"{ path_head }/structures"
-
-    # # Find low rmsf residues for alignment fitting
-    # core_res = np.load(f"{ path }/core_res.npy")
-    # aln_str = "protein and name CA and ("
-    # core_holo = [f"resid {i} or " for i in core_res]
-    # core_apo = [f"resid {i + 544} or " for i in core_res]
-    # core = aln_str + "".join((core_holo + core_apo))[:-4] + ")"
 
     # Set up selection strings for atom groups, using all atoms in the selected residues
     # beta_flap = "backbone and (resnum 195-231 or resnum 740-776)"
     if group == "alpha-flap":
-        flap = "resid 219-231 or resid 763-775"
+        select_group = "resid 219-231 or resid 763-775"
     elif group == "backbone":
-        flap = "resid 8-251 or resid 552-795"
-    elif group == "alpha-beta-flap": 
-        flap = "resid 195-231 or resid 739-775"
+        select_group = "resid 8-251 or resid 552-795"
+    elif group == "calphas":
+        select_group = "name CA and (resid 8-251 or resid 552-795)"
     else:
         # The beta-flap group (default)
-        flap = "backbone and (resid 195-218 or resid 739-762)"
+        select_group = "backbone and (resid 195-218 or resid 739-762)"
     ref_backbone = "resid 8-251 or resid 552-795"
 
     # Load in relevant reference structures
-    if conform == "holo":
-        ref_state = mda.Universe(f"{ struct_path }/holo_state.pdb")
-    else:
-        ref_state = mda.Universe(f"{ struct_path }/apo_state.pdb")
+    if conform == "open":
+        ref_state = mda.Universe(f"{ struct_path }/open_ref_state.pdb")
+    elif conform == "closed":
+        ref_state = mda.Universe(f"{ struct_path }/closed_ref_state.pdb")
 
     # Load in and align the traj
-    top = f"{ path }/topol.top"
-    traj = f"{ path }/fitted_traj.xtc"
-    u = mda.Universe(top, traj, topology_format="ITP", dt=1000)
-    # align.AlignTraj(u, ref_state, select=f"name CA and ({ref_backbone})", in_memory=True).run()
-    align.AlignTraj(u, u.select_atoms('name CA'), select="name CA", in_memory=True).run()
-    uf = u.select_atoms(flap)
+    u = mda.Universe(f"{ data_path }/{ topol }", f"{ data_path }/{ xtc }", 
+                     topology_format="ITP", dt=1000)
+    core_res, core = get_core_res() 
+    align.AlignTraj(u, u.select_atoms("protein"), select=core, in_memory=True, dt=1000).run()
+    uf = u.select_atoms(select_group)
 
-    p_components, cumulated_variance, transformed, mean = get_pc_data(u, \
-                                                    flap, uf, group, path)
+    # Store calculated outputs as numpy arrays, use analysis dir up one level
+    analysis_path = f"{ os.path.dirname(data_path) }/analysis/pca"
+    if not os.path.exists(analysis_path):
+        os.makedirs(analysis_path)
+    fig_path = f"{ fig_path }/pc_{ group }"
+    if not os.path.exists(fig_path):
+        os.makedirs(fig_path)
 
-    print(cumulated_variance)
+    arrs = get_pc_data(u, select_group, uf, group, analysis_path)
 
-    # n_pcs = np.where(pc.results.cumulated_variance > 0.95)[0][0]
-    # print(f"The first { n_pcs } principal components explain at least 95% of the "\
-    #        "total variance.\n")
+    print(arrs["cumulated_var"])
 
-    plot_eigvals(cumulated_variance, group, os.getcwd())
+    n_pcs = np.where(arrs["cumulated_var"] > 0.75)[0][0]
+    print(f"The first { n_pcs } principal components explain at least 75% of the "\
+           "total variance.\n")
 
-    plot_3PC(transformed, group, os.getcwd())
+    plot_eigvals(arrs["cumulated_var"], group, fig_path)
 
-    for i in range(3):
-        pc_min_max(transformed, u, group, i, os.getcwd())
+    plot_3PC(arrs["transformed"], group, fig_path)
 
-    for i in range(3):
-        visualize_PC(p_components, transformed, mean, i, uf, group, os.getcwd())
+    for i in range(4):
+        pc_min_max(arrs["transformed"], u, group, i, fig_path)
+
+    for i in range(4):
+        visualize_PC(arrs["p_components"], arrs["transformed"], arrs["mean"], 
+        i, uf, group, fig_path)
 
     return None
 
-def get_pc_data(u, flap, atom_group, group, path):
-    """
-    """
-    pc_files = [f"{ path }/p_components_{ group }.npy", 
-                f"{ path }/cumul_vaviance_{ group }.npy",
-                f"{ path }/transformed_{ group }.npy",
-                f"{ path }/mean_{ group }.npy"]
+def get_pc_data(u, select_group, atom_group, group, path):
+    """Determines PCA using MDAnalysis. 
 
-    if False: #all(list(map(lambda x : os.path.exists(x), pc_files))):
+    Parameters
+    ----------
+    u : mda.Universe
+        
+    """
+    pc_files = {"p_components" : f"{ path }/p_components_{ group }.npy", 
+                "cumulated_var" : f"{ path }/cumul_vaviance_{ group }.npy",
+                "transformed" : f"{ path }/transformed_{ group }.npy",
+                "mean" : f"{ path }/mean_{ group }.npy"}
 
-        p_components = np.load(pc_files[0], allow_pickle=True)
-        cumulated_variance = np.load(pc_files[1], allow_pickle=True)
-        transformed = np.load(pc_files[2], allow_pickle=True)
-        mean = np.load(pc_files[3], allow_pickle=True)
+    arrs = {}
+
+    if all(list(map(lambda x : os.path.exists(x), pc_files))):
+
+        print(
+            "LOADING NUMPY ARRAYS"
+        )
+
+        for key, file in pc_files.items(): 
+            arrs[key] = np.load(file, allow_pickle=True)
 
     else:
 
-        pc = pca.PCA(u, select=flap, align=True, n_components=50).run()
-        p_components = pc.results.p_components
-        cumulated_variance = pc.results.cumulated_variance
+        print(
+            "EVALUATING WITH MDANALYSIS"
+        )
+
+        pc = pca.PCA(u, select=select_group, align=True, n_components=50).run()
+        arrs["p_components"] = pc.results.p_components
+        arrs["cumulated_var"] = pc.results.cumulated_variance
 
         # Transforms the atom group into weights over each principal component
         # Here, weights of the first 3 components; shape --> (n_frames, n_PCs) 
-        transformed = pc.transform(atom_group, n_components=3)
+        arrs["transformed"] = pc.transform(atom_group, n_components=3)
 
-        mean = pc.mean.flatten()
+        arrs["mean"] = pc.mean.flatten()
 
-        np.save(pc_files[0], p_components)
-        np.save(pc_files[1], cumulated_variance)
-        np.save(pc_files[2], transformed)
-        np.save(pc_files[3], mean)
+        for key, file in pc_files.items():
+            np.save(file, arrs[key])
 
-    return p_components, cumulated_variance, transformed, mean
+    return arrs
 
 def plot_eigvals(cumulated_variance, group, fig_path):
     """Make a plot of the cummulative variance.
@@ -176,6 +202,8 @@ def plot_eigvals(cumulated_variance, group, fig_path):
     ax.grid(True)
     ax.set_xlabel(r"Principle component", labelpad=5, fontsize=16)
     ax.set_ylabel(r"Cumulative variance", labelpad=5, fontsize=16)
+
+    print("FIG PATH:", fig_path)
 
     # Save fig
     plt.savefig(f"{ fig_path }/pca_scree_{ group }.png")
@@ -236,6 +264,7 @@ def plot_3PC(transformed, group, fig_path):
 
     # Save fig
     plt.savefig(f"{ fig_path }/pca_first3_{ group }.png")
+    plt.show()
     plt.close()
 
     return None
@@ -248,11 +277,11 @@ def pc_min_max(transformed, u, group, rank, fig_path):
 
     min_ind = np.argmin(pc)
     u.trajectory[min_ind]
-    protein.write(f"PC{ rank }_min_{ group }.pdb")
+    protein.write(f"{ fig_path }/PC{ rank }_min_{ group }.pdb")
 
     max_ind = np.argmax(pc)
     u.trajectory[max_ind]
-    protein.write(f"PC{ rank }_max_{ group }.pdb")
+    protein.write(f"{ fig_path }/PC{ rank }_max_{ group }.pdb")
 
     return None
 
@@ -271,13 +300,50 @@ def visualize_PC(p_components, transformed, mean, rank, atom_group, group, fig_p
 
     with mda.Writer(f"{ fig_path }/pc_{ group }{ rank }.xtc", atom_group.n_atoms) as W:
         for ts in proj1.trajectory:
-            if ts.frame % 10 == 0:
+            if ts.frame % 100 == 0:
                 W.write(proj1)
 
-    with mda.Writer(f"{ fig_path }/pc_{ group }{ rank }.gro") as W:
+    with mda.Writer(f"{ fig_path }/pc_{ group }{ rank }.pdb") as W:
         W.write(proj1.atoms)
 
     return None
+
+def get_core_res(recalc=False):
+    """Finds the core residues which are immobile across the conformational states.
+
+    Uses data from the combined simulation of the apo states open and closed simulations,
+    to get the calphas of the residues with an RMSF below 1.5.
+
+    Parameters
+    ----------
+    recalc : boolean
+        Indicates whether the core_res array should be redetermined.
+
+    Returns
+    -------
+    core_res : nd.array
+        Indicies for the less mobile residues across conformational states. 
+    core : str
+        Selection string for the core residues.
+
+    """
+    core_res_path = f"{ path_head }/simulate/apo_state/open/data"
+    if not os.path.exists(f"{ core_res_path }/core_res.npy") or recalc:
+        top = f"{ core_res_path }/topol.top"
+        a = mda.Universe(top, f"{ core_res_path }/simulate/holo_conf/data/full_holo_apo.xtc",
+                         topology_format="ITP")
+        calphas, rmsf = get_rmsf(a, top, core_res_path)
+        core_res = calphas[(rmsf < 1.5)]
+        np.save(f"{ core_res_path }/core_res.npy", core_res)
+    else:
+        core_res = np.load(f"{ core_res_path }/core_res.npy")
+
+    aln_str = "protein and name CA and ("
+    core_open = [f"resid {i} or " for i in core_res]
+    core_closed = [f"resid {i + 544} or " for i in core_res]
+    core = aln_str + "".join((core_open + core_closed))[:-4] + ")"
+
+    return core_res, core
 
 if __name__ == '__main__':
     main(sys.argv)

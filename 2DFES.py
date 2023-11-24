@@ -38,13 +38,18 @@ def main(argv):
         parser.add_argument("-b", "--blocks",
                             action = "store",
                             dest = "nblocks",
-                            default = 50,
+                            default = 100,
                             help = """Number of blocks to use in bootstrap analysis.""")            
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
                             help = """Chose whether the reweighting should be recomputed.""")
+        parser.add_argument("-n", "--nobootstrap",
+                            action = "store_true",
+                            dest = "no_bootstrap",
+                            default = False,
+                            help = """Compute the free energy surface without error analysis.""")
 
         args = parser.parse_args()
 
@@ -64,9 +69,10 @@ def main(argv):
     # Other variables
     angle_coord = args.angle_coord
     recalc = args.recalc
+    no_bs = args.no_bootstrap
     nb = int(args.nblocks) # number of blocks for dividing data into blocks for bootstrapping
-    nw = 20 # number of windows (number of simulations) 
-    bs = 2#200 # number of bootstraps
+    nw = 181 # number of windows (number of simulations) 
+    bs = 10 #200 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
 
     # Helpful objects for structure alignment
@@ -78,73 +84,98 @@ def main(argv):
 
     vec_open, vec_closed = get_ref_vecs(struct_path, core, ref_state)
 
-    np_ave_files = [f"{ home }/hist_ave.npy", f"{ home }/hist_sq_ave.npy"]
+    np_ave_files = [f"{ home }/hist_ave.npy", f"{ home }/hist_sq_ave.npy", f"{ home }/bin_counter.npy"]
     bs_path = f"{ home }/bootstrap_files"
     if not os.path.exists(bs_path):
         os.makedirs(bs_path)
 
-    if not all(list(map(lambda x : os.path.exists(x), np_ave_files))) or recalc: 
+    if no_bs:
 
-        # Get the biasing data from COLVAR files
+        fes = get_no_bs_fes(bs_path)
+
+        # Make the 2D FES plot
+        plot_2dfes(fes.odot, fes.cdot, fes.ffr, None)
+
+    elif not all(list(map(lambda x : os.path.exists(x), np_ave_files))) or recalc: 
+
+        # # Get the biasing data from COLVAR files
         time, odot, cdot, bias, fpw = get_colvar_data()
 
+        print(bias)
+        print(f"SIZE OF BIAS { np.shape(bias) }")
+
         # Reshape the bias into blocks that can be used for bootstrapping
-        bb = bias.reshape((nb, fpw // nb, nw))
+        bb = bias.reshape((nw, nb, fpw // nb))
         time, odot, cdot = [n.reshape((nb, fpw // nb)) for n in [time, odot, cdot]]
 
         # Initialize arrays for the histogram data
-        ave, ave_sq = np.zeros(151**2), np.zeros(151**2)
+        ave, ave_sq, count = np.zeros(151**2), np.zeros(151**2), np.zeros(151**2)
 
-        # Construct bootstraps and determine reweighted histograms
+        # # Construct bootstraps and determine reweighted histograms
         for i in range(bs):
             print(i)
 
             # Choose random blocks for bootstap
             c=np.random.choice(nb, nb)
 
-            # Get the log weights for reweighting with WHAM 
-            w=wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
+            pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
+            hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
 
-            # Write the logweights to a pandas table for reweighting
-            colvar_weights = pd.DataFrame(data={"time" : time[c,:].flatten(), 
-                                "openvec" : odot[c,:].flatten(), 
-                                "closedvec" : cdot[c,:].flatten(), 
-                                "logweights" : w["logW"]})
+            if not os.path.exists(pfes_file) or recalc:
 
-            # Use plumed to make rweighted histograms
-            make_ith_histogram(colvar_weights, bs_path, i)
+                # Get the log weights for reweighting with WHAM 
+                w = wham.wham(bb[:,c,:].reshape((-1, nw)), T=kBT)
 
-            # Load in histogram data
-            hist = plumed.read_as_pandas(f"{ bs_path }/hist_catr_{ i }.dat").replace([np.inf, -np.inf], np.nan)
+                # Write the logweights to a pandas table for reweighting
+                colvar_weights = pd.DataFrame(data={"time" : time[c,:].flatten(), 
+                                    "openvec" : odot[c,:].flatten(), 
+                                    "closedvec" : cdot[c,:].flatten(), 
+                                    "logweights" : w["logW"]})
+
+                # Use plumed to make reweighted histograms
+                make_ith_histogram(colvar_weights, bs_path, i)
+
+            # Load in free energy estimates determined via plumed
+            pfes = plumed.read_as_pandas(pfes_file).replace([np.inf, -np.inf], np.nan)
 
             # Use the ith histogram to estimate average probability densities
-            ave += hist.hhr
-            ave_sq += hist.hhr*hist.hhr
+            # mask = ~np.isnan(pfes.ffr) # some bins will be NAN
+            # ave = np.nansum([ave, pfes.ffr], axis=0) 
+            # ave_sq = np.nansum([ave_sq, pfes.ffr*pfes.ffr], axis=0)
+            # count[mask] += 1 # only bins with a bootstrap estimate should have the count increased
 
-        for file, arr in zip(np_ave_files, [ave, ave_sq]):
+            ffr = pfes.ffr.astype(float)
+            ave += ffr
+            ave_sq += ffr*ffr
+
+        for file, arr in zip(np_ave_files, [ave, ave_sq, count]):
             np.save(file, arr)
 
     # Load calculated values from pandas tables and numpy arrays
     else:
 
         # Get bin positions for the CVs
-        hist = plumed.read_as_pandas(f"{ bs_path }/"
-                        "hist_catr_1.dat").replace([np.inf, -np.inf], np.nan) #.dropna()
+        pfes = plumed.read_as_pandas(f"{ bs_path }/"
+                        "fes_catr_0.dat").replace([np.inf, -np.inf], np.nan) #.dropna()
 
+        # Load the sum of the free energy esimates from each bin
         ave = np.load(np_ave_files[0], allow_pickle=True)
         ave_sq = np.load(np_ave_files[1], allow_pickle=True)
+        count = np.load(np_ave_files[2], allow_pickle=True)
 
     # Calculate free energy surface from histogram averages and 
     # free energy errors from the histograms, see expressions in ex-5 
     # https://www.plumed.org/doc-v2.8/user-doc/html/masterclass-21-2.html
     ave = ave / bs
-    var = (1 / (bs - 1)) * ( ave_sq / bs - ave * ave ) 
+    # fes = convert_fes(hist.odot, hist.cdot, ave)
+
+    var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
     fes = - kBT * np.log(ave)
     error = np.sqrt( var )
-    ferr = kBT * np.log(error / ave)
+    ferr = error / ave
 
     # Make the 2D FES plot
-    plot_2dfes(hist.odot, hist.cdot, fes, ferr)
+    plot_2dfes(pfes.odot, pfes.cdot, fes, ferr)
 
     # Make the error estimate plot for the 2D FES
 
@@ -164,9 +195,11 @@ def plot_2dfes(open_bins, closed_bins, fes, ferr):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
 
-    x = [ x for x, z in zip(open_bins, fes) if -1e10 < z < 1e10]
-    y = [ y for y, z in zip(closed_bins, fes) if -1e10 < z < 1e10]
-    z = [ z for z in fes if -1e10 < z < 1e10]
+    mask = ((-1e2 < fes) & (fes < 1e2))
+
+    x, y = open_bins[mask], closed_bins[mask]
+    z = fes[mask]
+    # z, err = fes[mask], ferr[mask]
 
     d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis)
 
@@ -379,12 +412,14 @@ def plot_1dfes(dat_path, conform, fig_path):
 
     return None
 
-def get_colvar_data():
+def get_colvar_data(recalc=False):
     """Get relevant data for the collective variables and restraint quantities.
 
     Parameters
     ----------
-    None.
+    recalc : bool
+        Redetermine the collective variable from plumed files rather than loading
+        arrays from as numpy files.
 
     Returns
     -------
@@ -400,19 +435,35 @@ def get_colvar_data():
     fpw : int
         The number of frames per simulation window.
     """
-    columns = ["time", "opendot", "closeddot", "theta1", "theta2", "bias", "force"]
-    col = []
-    for i in range(nw):
-        col.append(pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat", delim_whitespace=True, 
-                    comment='#', names=columns))
+    cv_bias_files = [f"{ home }/timeseries.npy", f"{ home }/opendot_concat.npy", 
+                     f"{ home }/closeddot_concat.npy", f"{ home }/bias_concat.npy"]
 
-    fpw = len(col[0]["bias"]) - 1 # frames per window
-    bias = np.zeros((fpw,nw))
-    for i in range(nw):
-        bias[:,i] = col[i]["bias"].iloc[1:] # [-len(bias):] 
-    time = np.array(col[0]["time"].iloc[1:])
-    odot = np.array(col[0]["opendot"].iloc[1:])
-    cdot = np.array(col[0]["closeddot"].iloc[1:])
+    if not all(list(map(lambda x : os.path.exists(x), cv_bias_files))) or recalc: 
+
+        columns = ["time", "opendot", "closeddot", "theta1", "theta2", "bias", "force"]
+        col = []
+        for i in range(nw):
+            col.append(pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat", delim_whitespace=True, 
+                        comment='#', names=columns))
+
+        fpw = len(col[0]["bias"]) - 1 # frames per window
+        bias = np.zeros((fpw,nw))
+        for i in range(nw):
+            bias[:,i] = col[i]["bias"].iloc[1:] # [-len(bias):] 
+        time = np.array(col[0]["time"].iloc[1:])
+        odot = np.array(col[0]["opendot"].iloc[1:])
+        cdot = np.array(col[0]["closeddot"].iloc[1:])
+
+        for file, arr in zip(cv_bias_files, [time, odot, cdot, bias]):
+            np.save(file, arr)
+
+    else:
+
+        time = np.load(cv_bias_files[0], allow_pickle=True)
+        odot = np.load(cv_bias_files[1], allow_pickle=True)
+        cdot = np.load(cv_bias_files[2], allow_pickle=True)
+        bias = np.load(cv_bias_files[3], allow_pickle=True)
+        fpw = len(odot)
 
     return time, odot, cdot, bias, fpw
 
@@ -442,14 +493,58 @@ def make_ith_histogram(colvar_weights, bs_path, i):
     cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closedvec IGNORE_TIME
     lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
 
-    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=150,150 BANDWIDTH=0.05,0.05 NORMALIZATION=ndata LOGWEIGHTS=lw
+    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=150,150 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
     DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
+    ffr: CONVERT_TO_FES GRID=hhr 
+    DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
 
     """, file=f)
 
     subprocess.run(("plumed driver --noatoms --plumed {}/colvar_histograms_{}.dat --kt {}").format(bs_path, i, kBT), shell=True)
 
     return None
+
+def get_no_bs_fes(bs_path):
+    """Use all the data to estimate the free energy surface, without bootstrapping.
+
+    Parameters
+    ----------
+    bs_path : str
+        Path to bootstrapping calculations directory.
+
+    Returns
+    -------
+    fes : pd.DataFrame
+        Pandas table with collective variable data and free energy estimates in kJ/mol.
+
+    """
+    fes_dat = f"{ bs_path }/fes_catr_fulldata.dat"
+
+    if not os.path.exists(fes_dat):
+
+        # # Get the biasing data from COLVAR files
+        time, odot, cdot, bias, fpw = get_colvar_data()
+
+        bb = bias.reshape((nb, fpw // nb, nw))
+        time, odot, cdot = [n.reshape((nb, fpw // nb)) for n in [time, odot, cdot]]
+
+        c = np.arange(0,100)
+
+        # Get the log weights for reweighting with WHAM 
+        w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
+        
+        # Write the logweights to a pandas table for reweighting
+        colvar_weights = pd.DataFrame(data={"time" : time[c,:].flatten(), 
+                            "openvec" : odot[c,:].flatten(), 
+                            "closedvec" : cdot[c,:].flatten(), 
+                            "logweights" : w["logW"]})
+        
+        # Use plumed to make reweighted histograms
+        make_ith_histogram(colvar_weights, bs_path, "fulldata")
+
+    fes = plumed.read_as_pandas(fes_dat).replace([np.inf, -np.inf], np.nan).dropna()
+
+    return fes
 
 if __name__ == '__main__':
     main(sys.argv)
