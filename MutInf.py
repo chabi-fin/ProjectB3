@@ -295,7 +295,7 @@ def get_torsions(path, topol, xtc, recalc=False):
         # Format column names and save DataFrame to file
         df_tor.columns = df_tor.columns.set_names(["Res ID", 
                                                    "Torsion Type"])
-        df_tor.to_hdf(df_file, key="data", mode="w")
+        utils.save_df(df_tor, df_file, heirarchical=True)
 
     return df_tor, u
 
@@ -394,7 +394,7 @@ def get_nmis(path, df_tor, recalc=False):
 
         df_nmis.columns = df_nmis.columns.set_names(["Res ID", "Torsion Type"])
         df_nmis.index = df_nmis.index.set_names(["Res ID", "Torsion Type"])
-        df_nmis.to_hdf(df_file, key="data", mode="w")
+        utils.save_df(df_nmis, df_file, heirarchical=True)
 
     return df_nmis
 
@@ -516,7 +516,7 @@ def get_res_nmi(path, df_corr, u, recalc=False):
                 res_nmi.loc[name_i, name_j] = nmi_sum / count
                 res_nmi.loc[name_j, name_i] = nmi_sum / count
 
-        res_nmi.to_csv(df_file, index=True, header=True)
+        utils.save_df(res_nmi, df_file)
 
     return res_nmi
 
@@ -633,7 +633,7 @@ def identify_contacts(path, topol, xtc, res_nmi, recalc=False):
                 df_contacts.loc[name_i, name_j] = (name_j in contact_residues)
                 df_contacts.loc[name_j, name_i] = (name_j in contact_residues)
 
-        df_contacts.to_csv(df_file, index=True, header=True)
+        utils.save_df(df_contacts, df_file)
         print(df_contacts)
 
     return df_contacts

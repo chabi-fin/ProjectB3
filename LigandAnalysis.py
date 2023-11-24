@@ -79,7 +79,7 @@ def get_core_res(recalc=False):
                          topology_format="ITP")
         calphas, rmsf = get_rmsf(a, top, core_res_path, get_core=True)
         core_res = calphas[(rmsf < 1.5)]
-        np.save(f"{ core_res_path }/core_res.npy", core_res)
+        utils.save_array(f"{ core_res_path }/core_res.npy", core_res)
     else:
         core_res = np.load(f"{ core_res_path }/core_res.npy")
 
@@ -146,7 +146,7 @@ def get_datas(data_paths, recalc):
             time_ser = np.array(time_ser)
 
             datas[path]["time_ser"] = time_ser
-            np.save(np_files["time_ser"], time_ser)
+            utils.save_array(np_files["time_ser"], time_ser)
             
             # Make a np array of the COM dist wrt the starting position
             ipl = u.select_atoms("resname IPL")
@@ -156,7 +156,7 @@ def get_datas(data_paths, recalc):
                 com_dist[ts.frame] = distance_array(com_init, ipl.center_of_mass())
 
             datas[path]["COM_dist"] = com_dist
-            np.save(np_files["COM_dist"], com_dist)
+            utils.save_array(np_files["COM_dist"], com_dist)
 
     return datas
 

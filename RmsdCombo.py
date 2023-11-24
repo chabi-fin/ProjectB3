@@ -72,7 +72,7 @@ def main(argv):
                          topology_format="ITP")
         calphas, rmsf = tf.get_rmsf(u, top, path)
         core_res = calphas[(rmsf < 1.5)]
-        np.save(f"{ holo_data }/core_res.npy", core_res)
+        utils.save_array(f"{ holo_data }/core_res.npy", core_res)
     else:
         core_res = np.load(f"{ holo_data }/core_res.npy")
 

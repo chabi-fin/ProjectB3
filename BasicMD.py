@@ -176,11 +176,11 @@ def main(argv):
         # the simulation
         arrs["r_gyr"], arrs["time_ser"] = get_rgyr(u)
 
-        # Phi and Psi backbone dihedrals
+        # # Phi and Psi backbone dihedrals
         resids = u.residues[195:232]
         rama = dihedrals.Ramachandran(resids).run()
         arrs["rama"] = rama.results.angles
-        np.save(np_files["rama"], arrs["rama"])
+        utils.save_array(np_files["rama"], arrs["rama"])
         
         # Chi1 dihedrals
         arrs["chi_1s"] = np.zeros((len(arrs["time_ser"]), len(resids)))
@@ -189,7 +189,7 @@ def main(argv):
             if group is not None:
                 dihs = dihedrals.Dihedral([group]).run()
                 arrs["chi_1s"][:,res.ix-195-1] = dihs.results.angles[:,0]
-        np.save(np_files["chi_1s"], arrs["chi_1s"])
+        utils.save_array(np_files["chi_1s"], arrs["chi_1s"])
         
         # Salt-bridge contacts
         arrs["sc"] = get_salt_contacts(u, ref_state)
@@ -256,9 +256,9 @@ def get_rmsd(system, reference, alignment, group, ref_state):
     rmsd_arr = R.results.rmsd
 
     if ref_state == "open":
-        np.save(np_files["R_open"], rmsd_arr)
+        utils.save_array(np_files["R_open"], rmsd_arr)
     elif ref_state == "closed":
-        np.save(np_files["R_closed"], rmsd_arr)
+        utils.save_array(np_files["R_closed"], rmsd_arr)
 
     return rmsd_arr
 
@@ -307,8 +307,8 @@ def get_rmsf(u, top, core_res, get_core=False):
 
     if not get_core:
 
-        np.save(np_files["calphas"], calphas.resnums)
-        np.save(np_files["rmsf"], rmsfer.results.rmsf)
+        utils.save_array(np_files["calphas"], calphas.resnums)
+        utils.save_array(np_files["rmsf"], rmsfer.results.rmsf)
 
     return calphas.resnums, rmsfer.results.rmsf
 
@@ -342,7 +342,7 @@ def get_salt_contacts(u, ref_state):
     salt_contacts.run()
     sc = salt_contacts.results.timeseries
 
-    np.save(np_files["sc"], sc)
+    utils.save_array(np_files["sc"], sc)
 
     return sc
 
@@ -391,7 +391,7 @@ def get_bridges(u):
         d4 = distance_array(pairs[3][0].positions, pairs[3][1].positions)
         distances[ts.frame] = [np.min(d1), np.min(d2), np.min(d3), np.min(d4)]
 
-    np.save(np_files["salt_dist"], distances)
+    utils.save_array(np_files["salt_dist"], distances)
 
     return distances
 
@@ -466,7 +466,7 @@ def get_hbonds(u):
                 f"\t{ count }\t{ in_flap }\n")
     f.close()
 
-    np.save(np_files["hbond_count"], hbond_count)
+    utils.save_array(np_files["hbond_count"], hbond_count)
 
     return hbond_count
 
@@ -510,7 +510,7 @@ def get_hbond_pairs(u):
         # Store the distances in the distances array
         distances[ts.frame] = [np.min(d1), np.min(d2), np.min(d3), np.min(d4)]
 
-    np.save(np_files["hpairs"], distances)
+    utils.save_array(np_files["hpairs"], distances)
 
     return distances
 
@@ -543,8 +543,8 @@ def get_rgyr(u):
     r_gyr = np.array(r_gyr)
     time_ser = np.array(time_ser)
 
-    np.save(np_files["r_gyr"], r_gyr)
-    np.save(np_files["time_ser"], time_ser)
+    utils.save_array(np_files["r_gyr"], r_gyr)
+    utils.save_array(np_files["time_ser"], time_ser)
 
     return r_gyr, time_ser
 

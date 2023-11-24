@@ -163,7 +163,7 @@ def get_pc_data(u, select_group, atom_group, group, path):
         arrs["mean"] = pc.mean.flatten()
 
         for key, file in pc_files.items():
-            np.save(file, arrs[key])
+            utils.save_array(file, arrs[key])
 
     return arrs
 
@@ -336,7 +336,7 @@ def get_core_res(recalc=False):
                          topology_format="ITP")
         calphas, rmsf = get_rmsf(a, top, core_res_path)
         core_res = calphas[(rmsf < 1.5)]
-        np.save(f"{ core_res_path }/core_res.npy", core_res)
+        utils.save_array(f"{ core_res_path }/core_res.npy", core_res)
     else:
         core_res = np.load(f"{ core_res_path }/core_res.npy")
 

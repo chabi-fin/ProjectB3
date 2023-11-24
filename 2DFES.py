@@ -149,7 +149,7 @@ def main(argv):
             ave_sq += ffr*ffr
 
         for file, arr in zip(np_ave_files, [ave, ave_sq, count]):
-            np.save(file, arr)
+            utils.save_array(file, arr)
 
     # Load calculated values from pandas tables and numpy arrays
     else:
@@ -455,7 +455,7 @@ def get_colvar_data(recalc=False):
         cdot = np.array(col[0]["closeddot"].iloc[1:])
 
         for file, arr in zip(cv_bias_files, [time, odot, cdot, bias]):
-            np.save(file, arr)
+            utils.save_array(file, arr)
 
     else:
 
