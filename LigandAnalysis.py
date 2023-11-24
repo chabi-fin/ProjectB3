@@ -8,6 +8,8 @@ import matplotlib.patheffects as pe
 import MDAnalysis as mda
 from MDAnalysis.analysis import rms, align
 from MDAnalysis.analysis.distances import distance_array
+import config.settings as c
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -198,7 +200,7 @@ def plot_coms(data_paths, datas, fig_path):
     ax.set_ylabel(r"Distance ($\AA$)", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
-    plt.savefig(f"{ fig_path }/com_dist.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/com_dist.png")
     plt.show()
     plt.close()
 

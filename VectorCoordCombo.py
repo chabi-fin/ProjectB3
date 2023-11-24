@@ -8,6 +8,8 @@ from MDAnalysis.analysis import align
 import pandas as pd
 import config.settings as config
 from tools import utils, traj_funcs
+import config.settings as c
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -310,11 +312,11 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False):
     plt.legend(fontsize=18, ncol=2)
 
     if restrain:
-        plt.savefig(f"{ fig_path }/beta_vec_{ conform }_{ state }_pts.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/beta_vec_{ conform }_{ state }_pts.png")
     elif angles_coord:
-        plt.savefig(f"{ fig_path }/beta_vec_angle_{ state }.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/beta_vec_angle_{ state }.png")
     else:
-        plt.savefig(f"{ fig_path }/beta_vec_{ state }.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/beta_vec_{ state }.png")
     plt.show()
     plt.close()
 

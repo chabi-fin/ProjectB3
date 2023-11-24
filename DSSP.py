@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import matplotlib.patches as mpatches
 import mdtraj as md
+import config.settings as c
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -240,11 +242,11 @@ def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w, apo):
         ax.set_xlabel("Time (ns)", labelpad=5, fontsize=24)
 
     if umbrella:
-        plt.savefig(f"{ path }/dssp_{ w }.png", dpi=300)
+        utils.save_figure(fig, f"{ path }/dssp_{ w }.png")
     elif subset:
-        plt.savefig(f"{ path }/dssp_flaps.png", dpi=300)
+        utils.save_figure(fig, f"{ path }/dssp_flaps.png")
     else:
-        plt.savefig(f"{ path }/dssp.png", dpi=300)
+        utils.save_figure(fig, f"{ path }/dssp.png")
     plt.close()
 
     return None

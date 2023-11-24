@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import pandas as pd
 import argparse
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -154,7 +155,7 @@ def plot_rmsf(states, path):
     ax.set_ylim(-1,6)
     plt.legend(fontsize=20, loc=2)
 
-    plt.savefig(f"{ path }/rmsf.png", dpi=300)
+    utils.save_figure(fig, f"{ path }/rmsf.png")
     plt.close()
 
     return None
@@ -208,7 +209,7 @@ def plot_rmsd_time(states, path, stride=1):
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=20)
 
-    plt.savefig(f"{ path }/rmsd_time.png", dpi=300)
+    utils.save_figure(fig, f"{ path }/rmsd_time.png")
     plt.close()
 
     return None
@@ -260,7 +261,7 @@ def plot_salt_bridges(states, path, stride=1):
     ax.set_ylabel(r"Distance K57--E200 $(\AA)$", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
-    plt.savefig(f"{ path }/salt_bridge_K57-E200.png", dpi=300)
+    utils.save_figure(fig, f"{ path }/salt_bridge_K57-E200.png")
     plt.close()
 
     return None
@@ -312,7 +313,7 @@ def plot_hbonds(states, path, stride=1):
     ax.set_ylabel(r"Distance N53--E200 $(\AA)$", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
-    plt.savefig(f"{ path }/hbond_N53-E200.png", dpi=300)
+    utils.save_figure(fig, f"{ path }/hbond_N53-E200.png")
     plt.close()
 
     return None
@@ -364,7 +365,7 @@ def plot_rgyr(states, path, stride=1):
     y_min, ymax = ax.get_ylim()
     ax.set_ylim(y_min-0.2,ymax+0.5)
 
-    plt.savefig(f"{ path }/rad_gyration.png", dpi=300)
+    utils.save_figure(fig, f"{ path }/rad_gyration.png")
     plt.close()
 
     return None

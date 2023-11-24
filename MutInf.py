@@ -135,7 +135,7 @@ def analyze_eigs(df, fig_path):
 
         """
         plt.scatter(np.arange(1, n+1), eigvals[:n], s=20)
-        plt.savefig(f"{ fig_path }/eigenvalues.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/eigenvalues.png")
         plt.close()
 
     eigvals, eigvecs = np.linalg.eig(df.fillna(0))
@@ -151,7 +151,7 @@ def analyze_eigs(df, fig_path):
 
         plt.scatter(eigvecs[:,i], eigvecs[:,j], 
                     c=np.arange(1,len(eigvals)+1), marker="o")
-        plt.savefig(f"{ fig_path }/{ i + 1 }_{ j + 1 }.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/{ i + 1 }_{ j + 1 }.png")
         plt.close()
 
     # Make 3D plot of first 3 eigenvectors
@@ -778,7 +778,7 @@ def plot_nmi(df, fig_path):
     cbar.outline.set_linewidth(2)
     ax.grid(False)
 
-    plt.savefig(fig_path, dpi=300)
+    utils.save_figure(fig, fig_path)
     plt.show()
     plt.close()
 
@@ -807,7 +807,7 @@ def plot_mi_hist(df, fig_path):
     ax.set_xlabel("NMI")
     ax.set_ylabel("frequency")
 
-    plt.savefig(f"{ fig_path }/nmi_histogram.png", dpi=300)
+    utils.save_figure(fig, f"{ fig_path }/nmi_histogram.png")
     plt.show()
     plt.close()
 

@@ -613,7 +613,6 @@ def plot_rmsd(r_open, r_closed, time_ser):
     ax.set_ylim(0,15)
 
     plt.legend(fontsize=28)
-    print(type(fig))
 
     #plt.savefig(f"{ fig_path }/rmsd_2D.png", dpi=300)
     utils.save_figure(fig, f"{ fig_path }/rmsd_2D.png")

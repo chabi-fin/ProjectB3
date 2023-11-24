@@ -7,6 +7,8 @@ import MDAnalysis as mda
 from MDAnalysis.analysis import align, pca
 import pandas as pd
 import seaborn as sns
+import config.settings as c
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -206,7 +208,7 @@ def plot_eigvals(cumulated_variance, group, fig_path):
     print("FIG PATH:", fig_path)
 
     # Save fig
-    plt.savefig(f"{ fig_path }/pca_scree_{ group }.png")
+    utils.save_figure(fig, f"{ fig_path }/pca_scree_{ group }.png")
     plt.close()
 
     return None
@@ -263,7 +265,7 @@ def plot_3PC(transformed, group, fig_path):
                 cell.spines[n].set_linewidth(2)
 
     # Save fig
-    plt.savefig(f"{ fig_path }/pca_first3_{ group }.png")
+    utils.save_figure(fig, f"{ fig_path }/pca_first3_{ group }.png")
     plt.show()
     plt.close()
 
