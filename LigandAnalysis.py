@@ -20,96 +20,85 @@ def main(argv):
                             action = "store",
                             nargs='+',
                             dest = "path",
-                            default = "/home/lf1071fu/project_b3/simulate/unbiased_sims/holo_open/nobackup /home/lf1071fu/project_b3/simulate/unbiased_sims/holo_closed/nobackup",
+                            default = ("/home/lf1071fu/project_b3/simula"
+                                "te/unbiased_sims/holo_open/nobackup /ho"
+                                "me/lf1071fu/project_b3/simulate/unbiase"
+                                "d_sims/holo_closed/nobackup"),
                             help = """Set path to the data directory.""")
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
-                            help = """Chose whether the trajectory arrays should  be recomputed.""")
+                            help = ("Chose whether the trajectory arrays"
+                                "should  be recomputed."))
         parser.add_argument("-f", "--figpath",
                             action = "store",
                             dest = "fig_path",
                             default = None,
-                            help = """Set a path destination for the figure.""")              
+                            help = ("Set a path destination for the "
+                                "figure."))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
-        print("Command line arguments are ill-defined, please check the arguments")
+        print("Command line arguments are ill-defined, please check the "
+            "arguments")
         raise
 
-    global path_head
-
-    # Assign group selection from argparse 
-    data_paths = args.path
-    fig_path = args.fig_path
+    # Assign group selection from argparse
+    data_paths = [f"{ c.data_head }/{ p }" for p in args.path]
+    fig_path = f"{ c.figure_head }/{ args.fig_path }"
     recalc = args.recalc
-    path_head = "/home/lf1071fu/project_b3"
 
     if not fig_path:
         fig_path = data_paths[0]
 
+    # Determine arrays from traj data or load from file
     datas = get_datas(data_paths, recalc)
 
+    # Make a plot of the center of mass of the ligand
     plot_coms(data_paths, datas, fig_path)
 
-def get_core_res(recalc=False):
-    """Finds the core residues which are immobile across the conformational states.
+    return None
 
-    Uses data from the combined simulation of the apo states open and closed simulations,
-    to get the calphas of the residues with an RMSF below 1.5.
+def get_datas(data_paths, recalc):
+    """Gets numpy arrays from traj data or stored array.
+
+    Determines the timeseries of time and ligand COM from trajectory 
+    data if not stored in the analysis directory. 
 
     Parameters
     ----------
-    recalc : boolean
-        Indicates whether the core_res array should be redetermined.
+    data_paths : (str) list
+        List of paths to simulation data.
+    recalc : bool
+        Redetermine numpy arrays and overwrite existing arrays. 
 
     Returns
     -------
-    core_res : nd.array
-        Indicies for the less mobile residues across conformational states. 
-    core : str
-        Selection string for the core residues.
+    datas : dict
+        Dictionary using data_paths as keys which stores the numpy 
+        arrays.
 
-    """
-    core_res_path = f"{ path_head }/simulate/unbiased_sims"
-    if not os.path.exists(f"{ core_res_path }/core_res.npy") or recalc:
-        top = f"{ core_res_path }/apo_open/topol.top"
-        a = mda.Universe(top, f"{ core_res_path }/full_apo.xtc",
-                         topology_format="ITP")
-        calphas, rmsf = get_rmsf(a, top, core_res_path, get_core=True)
-        core_res = calphas[(rmsf < 1.5)]
-        utils.save_array(f"{ core_res_path }/core_res.npy", core_res)
-    else:
-        core_res = np.load(f"{ core_res_path }/core_res.npy")
-
-    aln_str = "protein and name CA and ("
-    core_open = [f"resid {i} or " for i in core_res]
-    core_closed = [f"resid {i + 544} or " for i in core_res]
-    core = aln_str + "".join((core_open + core_closed))[:-4] + ")"
-
-    return core_res, core
-
-def get_datas(data_paths, recalc):
-    """
     """
     datas = {}
 
     # Indicies of the inflexible residues
-    core_res, core = get_core_res()
+    core_res, core = traj_funcs.get_core_res()
 
     for path in data_paths:
 
+        # Set up path variables
+        utils.validate_path(path)
         print(path)
         analysis_path = f"{ os.path.dirname(path) }/analysis"
-        if not os.path.exists(analysis_path):
-            os.makedirs(analysis_path)
-
+        utils.create_path(analysis_path)
         datas[path] = {}
         np_files = {"COM_dist" : f"{ analysis_path }/com_dist.npy", 
                     "time_ser" : f"{ analysis_path }/timeseries.npy"}
 
-        if all(list(map(lambda x : os.path.exists(x), np_files.values()))) and not recalc:
+        # Load in pre-determined numpy files
+        if all(list(map(lambda x : os.path.exists(x), \
+                        np_files.values()))) and not recalc:
 
             print(
                 "LOADING NUMPY ARRAYS"
@@ -118,26 +107,33 @@ def get_datas(data_paths, recalc):
             for key, file in np_files.items(): 
                 datas[path][key] = np.load(file, allow_pickle=True)
 
+        # Determine arrays from traj data
         else:
 
             print(
                 "EVALUATING WITH MDANALYSIS"
             )
 
+            # Get topol file or edit base topology
             topol = f"{ path }/topol_Pro_Lig.top"
             if not os.path.exists(topol):
                 with open(f"{ path }/topol.top", "r") as file:
                     lines = file.readlines()
 
-                filtered_lines = [line for line in lines if all(not line.startswith(s) for s  in ["SOL", "NA", "CL"])]
+                filtered_lines = [line for line in lines \
+                    if all(not line.startswith(s) \
+                    for s in ["SOL", "NA", "CL"])]
                 with open(topol, 'w') as file:
                     file.writelines(filtered_lines)
 
-            # Load in universe objects for the simulation and the reference structures
+            # Load in universe objects for the simulation and the 
+            # reference structures
             u = mda.Universe(topol, f"{ path }/fitted_traj_100.xtc",
                             topology_format='ITP')
 
-            align.AlignTraj(u, u.select_atoms("protein"), select=core, in_memory=True).run()
+            # Load in the trajectory and do alignment
+            u.transfer_to_memory()
+            u = traj_funcs.do_alignment(u)
 
             # Make a np array of the trajectory time series
             time_ser = []
@@ -145,6 +141,7 @@ def get_datas(data_paths, recalc):
                 time_ser.append(ts.time)
             time_ser = np.array(time_ser)
 
+            # Save numpy array to file
             datas[path]["time_ser"] = time_ser
             utils.save_array(np_files["time_ser"], time_ser)
             
@@ -153,15 +150,27 @@ def get_datas(data_paths, recalc):
             com_init = ipl.center_of_mass()
             com_dist = np.zeros(u.trajectory.n_frames)
             for ts in u.trajectory:
-                com_dist[ts.frame] = distance_array(com_init, ipl.center_of_mass())
+                com_dist[ts.frame] = distance_array(com_init, 
+                                            ipl.center_of_mass())
 
+            # Save numpy array to file
             datas[path]["COM_dist"] = com_dist
             utils.save_array(np_files["COM_dist"], com_dist)
 
     return datas
 
 def plot_coms(data_paths, datas, fig_path):
-    """Makes a time series plot of the distance from the ligand's initial COM.
+    """Makes a time series of the distance from the ligand's initial COM.
+
+    Parameters
+    ----------
+    data_paths : (str) list
+        List of paths to simulation data.
+    datas : dict
+        Dictionary using data_paths as keys which stores the numpy 
+        arrays.
+    fig_path : str
+        Path for saving the figure. 
 
     Returns
     -------
@@ -174,17 +183,23 @@ def plot_coms(data_paths, datas, fig_path):
     stride = 5
     i = 0
 
+    # Overlay plot for each simulation
     for p in data_paths:
 
+        # Access arrays
         arrs = datas[p]
         time_ser = arrs["time_ser"]
         com_dist = arrs["COM_dist"]
 
-        plt.plot(time_ser[::stride], com_dist[::stride], "-", lw=3, color=colors[i], label=labels[i], alpha=0.8,
-            path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
-
+        plt.plot(time_ser[::stride], com_dist[::stride], "-", lw=3,
+            color=colors[i], label=labels[i], alpha=0.8, 
+            path_effects=[pe.Stroke(linewidth=5, foreground='#595959'),
+            pe.Normal()])
+            
+        # counter for labels and colors
         i += 1
 
+    # Format the axes 
     num_ticks = 10
     xticks = time_ser[::(len(time_ser) // num_ticks)]
     ax.set_xticks(xticks)
@@ -196,12 +211,11 @@ def plot_coms(data_paths, datas, fig_path):
         # Use nanoseconds for time labels
         ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
         ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e3,1)), xticks)))
-
     ax.set_ylabel(r"Distance ($\AA$)", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
+    # Save plot to file
     utils.save_figure(fig, f"{ fig_path }/com_dist.png")
-    plt.show()
     plt.close()
 
     return None
