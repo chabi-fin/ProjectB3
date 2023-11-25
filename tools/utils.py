@@ -48,7 +48,7 @@ def make_log(name, log_file, log_type):
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Get the top script name 
-    script_name = os.path.basename(sys.argv[0])
+    script_name = " ".join(sys.argv)
 
     # String to append in log file
     log_entry = (f"{ current_time } - Script: { script_name },"
