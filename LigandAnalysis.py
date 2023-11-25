@@ -20,10 +20,9 @@ def main(argv):
                             action = "store",
                             nargs='+',
                             dest = "path",
-                            default = ("/home/lf1071fu/project_b3/simula"
-                                "te/unbiased_sims/holo_open/nobackup /ho"
-                                "me/lf1071fu/project_b3/simulate/unbiase"
-                                "d_sims/holo_closed/nobackup"),
+                            default = [
+                                "unbiased_sims/holo_open/nobackup",
+                                ("unbiased_sims/holo_closed/nobackup")],
                             help = """Set path to the data directory.""")
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
@@ -195,7 +194,7 @@ def plot_coms(data_paths, datas, fig_path):
             color=colors[i], label=labels[i], alpha=0.8, 
             path_effects=[pe.Stroke(linewidth=5, foreground='#595959'),
             pe.Normal()])
-            
+
         # counter for labels and colors
         i += 1
 
@@ -211,7 +210,7 @@ def plot_coms(data_paths, datas, fig_path):
         # Use nanoseconds for time labels
         ax.set_xlabel(r'Time (ns)', fontsize=24, labelpad=5)
         ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e3,1)), xticks)))
-    ax.set_ylabel(r"Distance ($\AA$)", labelpad=5, fontsize=24)
+    ax.set_ylabel(r"COM Distance ($\AA$)", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
     # Save plot to file
