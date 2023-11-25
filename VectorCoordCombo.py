@@ -221,7 +221,7 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2):
 
         #dot_prods[name] = np.array((dot_open, dot_closed))
 
-        df.to_csv(df_path, index=False)
+        utils.save_df(df, df_file) #index=False
 
     else: 
 
@@ -433,10 +433,8 @@ def oned_restraints():
                 "        (Restraint closed: {n["restrain closed"]}) "
                 "        (Distance : {n[f"distances_{i}"]})\n""")
 
-        struct_select.to_csv(
-            f"{ beta_vec_path }/select_initial_struct_{ state }.csv",
-            index=False
-            )
+        utils.save_df(struct_select, #index=False
+            f"{ beta_vec_path }/select_initial_struct_{ state }.csv")
 
 if __name__ == '__main__':
     main(sys.argv)
