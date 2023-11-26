@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import os
 import argparse
-import config.settings as config
+import config.settings as c
 from tools import utils, traj_funcs
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
@@ -12,6 +12,7 @@ from MDAnalysis.analysis.distances import distance_array
 import pandas as pd
 from sklearn import metrics
 import networkx as nx
+from sklearn.cluster import SpectralClustering
 
 def main(argv):
 
@@ -33,8 +34,8 @@ def main(argv):
                             action = "store",
                             dest = "fig_path",
                             default = "",
-                            help = """Set a path destination for the 
-                                figure.""")
+                            help = "Set a path destination for the "
+                                "figure.")
         parser.add_argument("-t", "--topol",
                             action = "store",
                             dest = "topol",
@@ -55,8 +56,8 @@ def main(argv):
         raise
 
     # Assign group selection from argparse 
-    data_path = f"{ config.data_head }/{ args.path }"
-    fig_path = f"{ config.figure_head }/{ args.fig_path }"
+    data_path = f"{ c.data_head }/{ args.path }"
+    fig_path = f"{ c.figure_head }/{ args.fig_path }"
     recalc = args.recalc
     topol = args.topol
     xtc = args.xtc
@@ -82,22 +83,28 @@ def main(argv):
     df_corr = apply_nmi_corrections(df_tor, df_nmi, data_path)
 
     # Check how sparse the matrix is
-    empty = df_corr.isna().sum().sum()
-    elements = df_nmi.shape[0] ** 2
-    print((f"TOTAL: { elements }, EMPTY: { empty }," 
-          "RATIO: { empty / elements *100 }"))
+    # empty = df_corr.isna().sum().sum()
+    # elements = df_nmi.shape[0] ** 2
+    # print((f"TOTAL: { elements }, EMPTY: { empty }," 
+    #       "RATIO: { empty / elements *100 }"))
 
     # Analyze the NMI matrix by eigendecomposition
     # analyze_eigs(df_nmi, fig_path)
-    plot_mi_hist(df_nmi, fig_path)
+    # plot_mi_hist(df_nmi, fig_path)
+
+    # Cluster using spectral clustering
+    # clusters = get_clusters(df_nmi, 3)
+    # print(clusters)
 
     # Make a plot of the NMI matrix
     # plot_nmi(df_nmi, f"{ fig_path }/torsions_nmi.png")
 
     # Determine the NMI between residue pairs, using a 
     # summation over the torsions
-    # res_nmi = get_res_nmi(data_path, df_corr, u, recalc=recalc)
+    res_nmi = get_res_nmi(data_path, df_corr, u, recalc=recalc)
     # analyze_eigs(res_nmi, fig_path)
+    clusters = get_clusters(df_nmi, 3)
+    print(clusters)
 
     # plot_nmi(res_nmi, f"{ fig_path }/residues_nmi.png")
 
@@ -110,6 +117,36 @@ def main(argv):
     # res_graph = make_graph(res_nmi, contacts, data_path)
 
     return None
+
+def get_clusters(df, n_clust):
+    """Determine clusters of the NMI matrix with spectral clustering.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A symmetric matrix containing the normalized mutual information 
+        for all torsion/residue pairs.
+    n_clust: int
+        Number of clusters to split data into. 
+
+    Returns
+    -------
+    labels : np.ndarray
+        Labels for the cluster group of each label
+
+    """
+    # Use scikit-learn implemetation of spectral clustering
+    clustering = SpectralClustering(
+                    n_clusters=n_clust, assign_labels="discretize",
+                    random_state=0, affinity="precomputed"
+                 ).fit(df)
+
+    # Make a dictionary for the clusters with torsions labeled
+    clusters = {}
+    for tor_lab, clust in zip(df.columns.to_list(), clustering.labels_): 
+        clusters[tor_lab] = clust
+
+    return clusters
 
 def analyze_eigs(df, fig_path):
     """Makes basic plots to understand NMI matrix eigendecomposition. 
@@ -228,13 +265,14 @@ def get_torsions(path, topol, xtc, recalc=False):
         )   
 
         # Use standard alignment procedure 
-        u = traj_funcs.do_alignment(u)
-
-        print("Normal exit.")
-        sys.exit(1)
+        # u = traj_funcs.do_alignment(u)
 
         # Initialize DataFrame for all torsions
         df_tor = pd.DataFrame()
+
+        # store all of the torsion AtomGroups
+        groups = []
+        labels = []
 
         # Iterate over residues
         for res in u.residues:
@@ -242,60 +280,48 @@ def get_torsions(path, topol, xtc, recalc=False):
             # Apply binning to each series
             bin_edges = np.arange(-180,181)
 
+            # Convenience variables
             res_id = res.resid 
             resn = res.resname
-            tor_dict = None
 
-            # Get AtomGroups of the torsions
-            groups = [res.phi_selection(), res.psi_selection(), 
-                      res.chi1_selection()] 
-            groups = [ g for g in groups if g is not None ]
-            groups.extend(get_chi_groups(res))
-
-            # Determine torsions for all the AtomGroups
-            tors = dihedrals.Dihedral(groups).run()
-            t = tors.results.angles
+            # Get AtomGroups of the residues torsions
+            group = [res.phi_selection(), res.psi_selection(), 
+                      res.chi1_selection()]
+            group.extend(get_chi_groups(res))
 
             # Assign Phi and Psi and handle terminal residues
-            phi_lab = (f"{ resn } { res_id }", "Phi")
-            psi_lab = (f"{ resn } { res_id }", "Psi")
-            if res == u.residues[0]:
-                tor_dict = {phi_lab : np.digitize(
-                                          tors.results.angles[:,0], 
-                                          bin_edges, 
-                                          right=False)}
-            elif res == u.residues[-1]:
-                tor_dict = {psi_lab : np.digitize(
-                                            tors.results.angles[:,1], 
-                                            bin_edges, 
-                                            right=False)}
-            else:
-                tor_dict = {phi_lab : np.digitize(
-                                            tors.results.angles[:,0], 
-                                            bin_edges, 
-                                            right=False),
-                            psi_lab : np.digitize(
-                                            tors.results.angles[:,1], 
-                                            bin_edges, 
-                                            right=False)}
+            labs = [(f"{ resn } { res_id }", "Phi"),
+                   (f"{ resn } { res_id }", "Psi"),]
 
             # Assign any/all chi torsions for the residues
-            for c, g in enumerate(groups[2:]):
+            for c, g in enumerate(group[2:]):
                 ind = (f"{ resn } { res_id }", f"Chi { c + 1 }")
-                tor_dict[ind] = np.digitize(
-                                    tors.results.angles[:, c + 2], 
-                                    bin_edges, 
-                                    right=False)
+                labs.append(ind)
 
-            # Convert the residues' torsions dictionary and concatenate 
-            # with the DataFrame to combine with other residues
-            new_c = pd.DataFrame(tor_dict)
-            df_tor = pd.concat([df_tor, new_c], axis=1)
+            # Filter our non-groups
+            group_filt = [g for g in group if g is not None ]
+            labs_filt = [l for l, g in zip(labs, group) if g is not None]
+            groups.extend(group_filt)
+            labels.extend(labs_filt)
+
+        # Determine torsions for all the AtomGroups
+        tors = dihedrals.Dihedral(groups).run()
+        t = tors.results.angles
+
+        # Convert torsions to dictionary object
+        tor_dict = {}
+        for lab, tor in zip(labels, zip(*t)):
+            tor_discrete = np.digitize(tor, bin_edges, right=False)
+            tor_dict[lab] = tor_discrete 
+
+        # Convert the residues' torsions dictionary and concatenate 
+        # with the DataFrame to combine with other residues
+        df_tor = pd.DataFrame(tor_dict)
 
         # Format column names and save DataFrame to file
         df_tor.columns = df_tor.columns.set_names(["Res ID", 
                                                    "Torsion Type"])
-        utils.save_df(df_tor, df_file, heirarchical=True)
+        utils.save_df(df_tor, df_file, hierarchical=True)
 
     return df_tor, u
 
@@ -420,10 +446,10 @@ def apply_nmi_corrections(df_tor, df_nmi, path):
     """
     analysis_path = f"{ os.path.dirname(path) }/analysis"
     nmi_threshold = {}
-    for i in df_nmi.columns.to_list():
-        # min_nmi = calc_MI(df_tor[i], df_tor[i].sample(frac=1).reset_index(drop=True))
-        min_nmi = calc_MI(df_tor[i], df_tor[i][::-1])
-        nmi_threshold[i] = min_nmi
+    # for i in df_nmi.columns.to_list():
+    #     # min_nmi = calc_MI(df_tor[i], df_tor[i].sample(frac=1).reset_index(drop=True))
+    #     min_nmi = calc_MI(df_tor[i], df_tor[i][::-1])
+    #     nmi_threshold[i] = min_nmi
 
     import pickle
 
