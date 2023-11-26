@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
 import pandas as pd
-import config.settings as config
 from tools import utils, traj_funcs
 import config.settings as c
 from tools import utils, traj_funcs
@@ -57,10 +56,10 @@ def main(argv):
                             action = "store",
                             dest = "paths",
                             nargs='+',
-                            default = "unbiased_sims/mutation/K57G/nobac"
-                                "kup unbiased_sims/mutation/E200G/noback"
-                                "up unbiased_sims/mutation/double_mut/no"
-                                "backup",
+                            default = ["unbiased_sims/mutation/K57G/noba"
+                                "ckup", "unbiased_sims/mutation/E200G/no"
+                                "backup", "unbiased_sims/mutation/double"
+                                "_mut/nobackup"],
                             help = """Set path to the data directory.""")                       
         args = parser.parse_args()
 
@@ -79,13 +78,13 @@ def main(argv):
     conform = args.conform
     state = args.state
     alphafold = args.alphafold
-    data_paths = [f"{ config.data_head }/{ p }" for p in args.paths]
+    data_paths = [f"{ c.data_head }/{ p }" for p in args.paths]
 
-    fig_path = f"{ config.figure_head }/unbiased_sims/rxn_coord"
-    struct_path = config.struct_head
+    fig_path = f"{ c.figure_head }/unbiased_sims/rxn_coord"
+    struct_path = c.struct_head
     beta_vec_path = ("/home/lf1071fu/project_b3/simulate/lyn_sims/"
                      "umbrella_sampling/beta_vec_open")
-    data_head = config.data_head
+    data_head = c.data_head
     sim_paths = {
         "apo-open" : f"{ data_head }/unbiased_sims/apo_open/nobackup",
         "apo-closed" : f"{ data_head }/unbiased_sims/apo_closed/nobackup",
@@ -100,7 +99,7 @@ def main(argv):
     trajs = {}
     tops = {}
     xtc = "fitted_traj_100.xtc"
-    top = "topol_Pro_Lig.top"
+    top = "topol_protein.top"
     if alphafold:
         af_path = f"{ data_head }/unbiased_sims/af_replicas"
         for i in range(1,10):
@@ -219,9 +218,7 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2):
 
                 df = pd.concat([df, df_new])
 
-        #dot_prods[name] = np.array((dot_open, dot_closed))
-
-        utils.save_df(df, df_file) #index=False
+        utils.save_df(df, df_path) #index=False
 
     else: 
 
