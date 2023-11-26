@@ -149,7 +149,7 @@ def save_df(df, df_path, hierarchical=False,
 
     """
     # Save the DataFrame
-    if heirarchical:
+    if hierarchical:
         df.to_hdf(df_path, key="data", mode="w")
     else:
         df.to_csv(df_path, index=True, header=True)
