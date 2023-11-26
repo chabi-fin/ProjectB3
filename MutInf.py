@@ -13,6 +13,7 @@ import pandas as pd
 from sklearn import metrics
 import networkx as nx
 from sklearn.cluster import SpectralClustering
+from Bio import PDB
 
 def main(argv):
 
@@ -65,9 +66,14 @@ def main(argv):
     # Check for valid paths
     for p in [data_path, fig_path]:
         utils.validate_path(p)
+    
+    # Set up path for analysis of clusters
+    cluster_path = f"{ os.path.dirname(data_path) }/analysis/cluster"
+    if not os.path.exists(cluster_path):
+        os.makedirs(cluster_path)
 
     # Extract torsion data from the simulation or load from file
-    df_tor, u = get_torsions(data_path, topol, xtc, recalc=True)
+    df_tor, u = get_torsions(data_path, topol, xtc, recalc=recalc)
     # print(df_tor)
 
     # Determine the normalized mutual information for all torsion pairs
@@ -103,8 +109,11 @@ def main(argv):
     # summation over the torsions
     res_nmi = get_res_nmi(data_path, df_corr, u, recalc=recalc)
     # analyze_eigs(res_nmi, fig_path)
-    clusters = get_clusters(df_nmi, 3)
-    print(clusters)
+    clusters = get_clusters(res_nmi.fillna(0), 3, cluster_path, "res_nmi_corr")
+    visualize_clusters(clusters, cluster_path, "open_ref", 
+                        f"{ c.struct_head }/open_ref_state.pdb")
+    visualize_clusters(clusters, cluster_path, "closed_ref", 
+                        f"{ c.struct_head }/closed_ref_state.pdb")
 
     # plot_nmi(res_nmi, f"{ fig_path }/residues_nmi.png")
 
@@ -118,7 +127,53 @@ def main(argv):
 
     return None
 
-def get_clusters(df, n_clust):
+def visualize_clusters(clusters, cluster_path, ref_name, ref_path):
+    """Visualize clusters by adding labels to pdb.
+
+    Parameters
+    ----------
+    clusters : pd.Series
+        Cluster labels for each residue.
+    cluster_path : str
+        Path to the cluster analysis directory. 
+    ref_name : str
+        Name of the structure, used in the output file.
+
+    Returns
+    -------
+    None.
+
+    """
+    # Load in reference structure
+    pdb_parser = PDB.PDBParser(QUIET=True)
+    ref_struct = pdb_parser.get_structure(ref_name, ref_path)
+
+    # Make groups accessible by the residue id.
+    resid_clusts = {}
+    for key, group in clusters.items():
+        resid = int(key[3:])
+        resid_clusts[resid] = group
+
+    # Number of clusters
+    n_clusts = len(set(clusters.values()))
+
+    # Set the beta factor values to the cluster group
+    for model in ref_struct:
+        for chain in model:
+            for residue in chain:
+                for atom in residue:
+                    atom.set_bfactor(0.0)
+                r = residue.id[1]
+                residue["CA"].set_bfactor(resid_clusts[r])
+
+    # Save the modified structures for visualization
+    io = PDB.PDBIO()
+    io.set_structure(ref_struct)
+    io.save(f"{ cluster_path }/{ ref_struct.id }_{ n_clusts }clusters.pdb")
+
+    return None
+
+def get_clusters(df, n_clust, path, descript=""):
     """Determine clusters of the NMI matrix with spectral clustering.
 
     Parameters
@@ -128,13 +183,18 @@ def get_clusters(df, n_clust):
         for all torsion/residue pairs.
     n_clust: int
         Number of clusters to split data into. 
+    descript : str
+        A short descriptor for naming csv file. 
 
     Returns
     -------
-    labels : np.ndarray
-        Labels for the cluster group of each label
+    clusters : pd.Series
+        Cluster labels for each node. 
 
     """
+    # DataFrame stored as a csv file
+    df_file = f"{ path }/{ n_clust }clust_{ descript }.csv"
+
     # Use scikit-learn implemetation of spectral clustering
     clustering = SpectralClustering(
                     n_clusters=n_clust, assign_labels="discretize",
@@ -145,6 +205,10 @@ def get_clusters(df, n_clust):
     clusters = {}
     for tor_lab, clust in zip(df.columns.to_list(), clustering.labels_): 
         clusters[tor_lab] = clust
+
+    # Convert to pd.Series and save to csv
+    series = pd.Series(clusters)
+    utils.save_df(series, df_file)
 
     return clusters
 
