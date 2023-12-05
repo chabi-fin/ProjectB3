@@ -107,13 +107,17 @@ def main(argv):
 
     # Determine the NMI between residue pairs, using a 
     # summation over the torsions
-    res_nmi = get_res_nmi(data_path, df_corr, u, recalc=recalc)
+    corr = False
+    res_nmi = get_res_nmi(data_path, df_nmi, u, recalc=recalc, corrected=corr)
     # analyze_eigs(res_nmi, fig_path)
-    clusters = get_clusters(res_nmi.fillna(0), 3, cluster_path, "res_nmi_corr")
+    clusters = get_clusters(res_nmi.fillna(0), 2, cluster_path, 
+                            "res_nmi_corr")
     visualize_clusters(clusters, cluster_path, "open_ref", 
-                        f"{ c.struct_head }/open_ref_state.pdb")
+                        f"{ c.struct_head }/open_ref_state.pdb",
+                        corrected=corr)
     visualize_clusters(clusters, cluster_path, "closed_ref", 
-                        f"{ c.struct_head }/closed_ref_state.pdb")
+                        f"{ c.struct_head }/closed_ref_state.pdb",
+                        corrected=corr)
 
     # plot_nmi(res_nmi, f"{ fig_path }/residues_nmi.png")
 
@@ -127,7 +131,8 @@ def main(argv):
 
     return None
 
-def visualize_clusters(clusters, cluster_path, ref_name, ref_path):
+def visualize_clusters(clusters, cluster_path, ref_name, ref_path, 
+        corrected=False):
     """Visualize clusters by adding labels to pdb.
 
     Parameters
@@ -169,7 +174,10 @@ def visualize_clusters(clusters, cluster_path, ref_name, ref_path):
     # Save the modified structures for visualization
     io = PDB.PDBIO()
     io.set_structure(ref_struct)
-    io.save(f"{ cluster_path }/{ ref_struct.id }_{ n_clusts }clusters.pdb")
+    if corrected:
+        io.save(f"{ cluster_path }/{ ref_struct.id }_{ n_clusts }clusters_corr.pdb")
+    else:
+        io.save(f"{ cluster_path }/{ ref_struct.id }_{ n_clusts }clusters.pdb")
 
     return None
 
@@ -338,8 +346,10 @@ def get_torsions(path, topol, xtc, recalc=False):
         groups = []
         labels = []
 
-        # Iterate over residues
-        for res in u.residues:
+        # Iterate over protein residues (exclude IPL)
+        for res in u.residues[:254]:
+
+            print(res)
 
             # Apply binning to each series
             bin_edges = np.arange(-180,181)
@@ -404,7 +414,8 @@ def calc_MI(tor1, tor2, norm_type="NMI"):
     tor2 : pd.Series 
         Trajectory data in bins for torsion 2.
     norm_type : str
-        Use a selection key (i.e. 'NMI', 'Adjust') for the normalized scoring function.
+        Use a selection key (i.e. 'NMI', 'Adjust') for the normalized 
+        scoring function.
 
     Returns
     -------
@@ -419,7 +430,8 @@ def calc_MI(tor1, tor2, norm_type="NMI"):
         nmi = metrics.adjusted_mutual_info_score(tor1, tor2)
     else:
         print(f"Invalid 'norm_type' used : { norm_type }. "
-                "Select a valid function for normalization (i.e. 'NMI', 'Adjust'.)")
+                "Select a valid function for normalization (i.e. 'NMI', "
+                "'Adjust'.)")
         sys.exit(1)
 
     return nmi
@@ -432,18 +444,20 @@ def get_nmis(path, df_tor, recalc=False):
     path : str
         Path to the directory with trajectory data.
     df_tor : pd.DataFrame
-        A DataFrame of the torsions with row indexing by trajectory frame. A MultiIndex 
-        is used for the columns, with residue numbers at the highest level and torsion 
-        labels at the secondary level, (phi, psi, chi1, ..., chin).
+        A DataFrame of the torsions with row indexing by trajectory 
+        frame. A MultiIndex is used for the columns, with residue numbers 
+        at the highest level and torsion labels at the secondary level, 
+        (phi, psi, chi1, ..., chin).
 
     Returns
     -------
     df_nmi : pd.DataFrame
-        A symmetric matrix containing the normalized mutual information for
-        all torsion pairs.
+        A symmetric matrix containing the normalized mutual information 
+        for all torsion pairs.
 
     """
-     # Store calculated outputs as numpy arrays, use analysis dir up one level
+    # Store calculated outputs as numpy arrays, use analysis dir up one 
+    # level
     analysis_path = f"{ os.path.dirname(path) }/analysis"
     if not os.path.exists(analysis_path):
         os.makedirs(analysis_path)
@@ -484,7 +498,7 @@ def get_nmis(path, df_tor, recalc=False):
 
         df_nmis.columns = df_nmis.columns.set_names(["Res ID", "Torsion Type"])
         df_nmis.index = df_nmis.index.set_names(["Res ID", "Torsion Type"])
-        utils.save_df(df_nmis, df_file, heirarchical=True)
+        utils.save_df(df_nmis, df_file, hierarchical=True)
 
     return df_nmis
 
@@ -527,7 +541,7 @@ def apply_nmi_corrections(df_tor, df_nmi, path):
     # print(nmi_threshold)
     # print(min(nmi_threshold.values()), max(nmi_threshold.values()))
 
-    df_corr = df_nmi.mask(df_nmi < 0.1, np.nan)
+    df_corr = df_nmi.mask(df_nmi > 0.1, np.nan)
 
     # if not (df_corr.values == df_corr.values.T).all().all():
     #     print("ERROR: Non-symmetric NMI matrix.")
@@ -535,18 +549,24 @@ def apply_nmi_corrections(df_tor, df_nmi, path):
 
     return df_corr
 
-def get_res_nmi(path, df_corr, u, recalc=False):
+def get_res_nmi(path, df, u, recalc=False, corrected=False):
     """Determines the NMI from the corrected torsional NMIs.
 
     Parameters
     ----------
     path : str
         Path to the directory with trajectory data.
-    df_corr : pd.DataFrame
-        A symmetric matrix containing the normalized mutual information for
-        all torsion pairs with statistical corrections applied.
+    df : pd.DataFrame
+        A symmetric matrix containing the normalized mutual information 
+        for all torsion pairs with or without statistical corrections 
+        applied.
     u : mda.Universe
         The relevant universe object. 
+    recalc : bool
+        Redetermine the table from simulation data, even if a DataFrame 
+        is already saved to file.
+    corrected : bool
+        DataFrame should use raw or corrected NMI values.
 
     Returns
     -------
@@ -561,7 +581,10 @@ def get_res_nmi(path, df_corr, u, recalc=False):
         os.makedirs(analysis_path)
 
     # DataFrame stored as a csv file
-    df_file = f"{ analysis_path }/res_nmi.csv"
+    if corrected:
+        df_file = f"{ analysis_path }/res_nmi.csv"
+    else:
+        df_file = f"{ analysis_path }/res_nmi_corr.csv"
 
     if os.path.exists(df_file) and not recalc:
 
@@ -577,7 +600,7 @@ def get_res_nmi(path, df_corr, u, recalc=False):
             "EVALUATING RESIDUE NMIs using TORSION PAIR NMIs..."
         )   
 
-        n = df_corr.columns.get_level_values("Res ID").unique()
+        n = df.columns.get_level_values("Res ID").unique()
         res_nmi = pd.DataFrame(index=n, columns=n)
 
         # Iterate over residues, for i
@@ -599,7 +622,7 @@ def get_res_nmi(path, df_corr, u, recalc=False):
                 #     continue
                 
                 # Get the pair subselection from the table and sum all entries
-                df_pair = df_corr.loc[name_i, name_j]
+                df_pair = df.loc[name_i, name_j]
                 count = df_pair.count().sum()
                 nmi_sum = df_pair.values.sum()
 

@@ -139,7 +139,9 @@ def do_alignment(u):
         # Use the core atoms from the first frame to generate a 
         # reference structure for future alignments 
         first_frame = u.trajectory[0]
-        u.select_atoms("all").write(f"{ config.struct_head }/ref_all_atoms.pdb")
+        u.select_atoms("all").write(
+            f"{ config.struct_head }/ref_all_atoms.pdb"
+        )
         first_frame_core = u.select_atoms(core)
         first_frame_core.write(ref_path)
         print(f"Wrote reference alignment structure to { ref_path }.")
@@ -148,6 +150,6 @@ def do_alignment(u):
         print(f"Error: An unexpected error occurred - { e } .")
 
     ref_struct = mda.Universe(ref_path)
-    align.AlignTraj(u, ref_struct, select=core, in_memory=True).run()
+    u = align.AlignTraj(u, ref_struct, select=core, in_memory=True).run()
 
     return u
