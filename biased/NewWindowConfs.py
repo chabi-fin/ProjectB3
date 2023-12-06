@@ -3,6 +3,7 @@ import pandas as pd
 import argparse
 import os
 import sys
+import subprocess
 
 def main(argv):
 
@@ -47,6 +48,7 @@ def main(argv):
 
     # Get sampled collective variables in one table
     df_cat = pd.DataFrame(columns=["time", "dot-open", "dot-closed"])
+    df_pts["InitialConform"] = 0
     for w in range(1,151):
         for r in range(1,5):
             file = f"window{ w }/run{ r }/COLVAR_{ w }.dat"
@@ -56,24 +58,24 @@ def main(argv):
                 df_cat = pd.concat([df_cat, df_new])
 
             if os.path.exists(os.path.dirname(file)):
-                df_pts.loc[df_pts["Window"] == w, "InitialConform"] = True
+                df_pts.loc[df_pts["Window"] == w, "InitialConform"] = 1
 
     # Find all the window restraint points which have no COLVAR data.
     # These are the windows which still need an initial conform
-    needs_conform = df_pts[df_pts["InitialConform"] == False]
+    needs_conform = df_pts[(df_pts["InitialConform"] < 1)]
+    print(needs_conform)
 
     # Print the DataFrame of sampled reactions coords data
     pd.set_option("display.max_columns", None)
     pd.set_option("display.max_rows", None)
-    print(df_cat)
 
     # Set up some variables
     restraint_grid = np.array((needs_conform.OpenPoints, 
                             needs_conform.ClosedPoints,
                             needs_conform.Window))
 
-    df_pts = df_pts.assign(NearestWindow=False, NearestRun=False,
-                       NearestFrame=False)
+    df_pts = df_pts.assign(NearestWindow=0, NearestRun=0,
+                       NearestFrame=0)
 
     # Iterate over all the restraints to find the closest conform
     # from the sampled windows
@@ -92,15 +94,79 @@ def main(argv):
     # New DataFrame to use for extracting data
     df_pts.to_csv(new_pts_file)
 
-    # # Initialize window dirs with new conformations
-    # for i, row in df_pts.iterrows():
+    # Initialize window dirs with new conformations
+    df_filt = df_pts[(df_pts["InitialConform"] < 1)]
+    print("DF FILTERED", df_filt)   
 
-    #     w = row["Window"]
+    # Get the plumed template file
+    with open("plumed.dat", "r") as f:
+        plumed_lines = f.readlines()  
 
-    #     destination = f"window{ w }"
-    #     os.makedirs(destination, exist_ok=True)
-    #     plumed_file = f"{ destination }/plumed_{ w }.dat"
-    #     initial_out = f"{ destination }/initial_conform.pdb"
+    new_windows = []
+
+    for i, row in df_filt.iterrows():
+        
+        w = int(row["Window"])
+
+        # Get the nearby intial conformation from a biased simulation
+        if row["NearestWindow"] > 0:
+
+            new_windows.append(w)
+
+            # Substitute restraint values into the windows plumed file
+            plumed_wlines = []
+            for line in plumed_lines:
+                if "RESTRAINT_OPEN" in line:
+                    line = line.replace("RESTRAINT_OPEN", 
+                                        str(row["OpenPoints"]))
+                if "RESTRAINT_CLOSED" in line:
+                    line = line.replace("RESTRAINT_CLOSED",
+                                        str(row["ClosedPoints"]))
+                if "COLVAR_WINDOW" in line:
+                    line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
+                plumed_wlines.append(line)
+
+            destination = f"window{ w }"
+            os.makedirs(destination, exist_ok=True)
+            plumed_wfile = f"{ destination }/plumed_{ w }.dat"
+            initial_out = f"{ destination }/initial_conform.pdb"
+            print("Initial out", initial_out)
+
+            nw = str(int(row["NearestWindow"]))
+            r = str(int(row["NearestRun"]))
+            traj = f"window{ nw }/run{ r }/centered_traj.xtc"
+            top = f"window{ nw }/run{ r }/w{ nw }_r{ r }.tpr"
+            time_frame = int(row["NearestFrame"])
+
+            gmx = ["echo", "-e", "24", "|", "gmx", "trjconv", "-f", 
+                traj, "-s", top, "-o", initial_out, "-b", 
+                str(time_frame - 1000), "-dump", str(time_frame), "-n", 
+                "index.ndx", "-nobackup"]
+
+            print("\n", " ".join(gmx), "\n")
+            
+            # Use gromacs subprocess to extract the conformation at the 
+            # desired time
+            process = subprocess.Popen(" ".join(gmx), 
+                                      stdin=subprocess.PIPE, 
+                                      stdout=subprocess.PIPE,
+                                      shell=True, text=True)
+
+            # Pass input to the GROMACS command to use protein + ligand
+            stdout, stderr = process.communicate("24\n")
+            print("Output:", stdout)
+            print("Error:", stderr)
+
+            time.sleep(5)
+
+            # Right out the plumed file for the window
+            with open(plumed_wfile, "w") as f:
+                f.writelines(plumed_restraints)
+
+    # Save the list to a file using pickle
+    import pickle
+    with open(f"window_iterations_{ i + 1 }", "wb") as file:
+        pickle.dump(new_windows, file)
 
     return None
 
@@ -152,8 +218,8 @@ def add_colvar_data(window, run, file):
     df = pd.read_csv(file, comment="#", delim_whitespace=True, 
                        names=["time", "dot-open", "dot-closed",
                               "res-bias", "res-force"])
-    df["window"] = window
-    df["run"] = run
+    df["window"] = int(window)
+    df["run"] = int(run)
 
     return df[10:10000]
 
