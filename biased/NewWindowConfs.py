@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import subprocess
+import time
 
 def main(argv):
 
@@ -73,7 +74,6 @@ def main(argv):
     restraint_grid = np.array((needs_conform.OpenPoints, 
                             needs_conform.ClosedPoints,
                             needs_conform.Window))
-
     df_pts = df_pts.assign(NearestWindow=0, NearestRun=0,
                        NearestFrame=0)
 
@@ -111,8 +111,6 @@ def main(argv):
         # Get the nearby intial conformation from a biased simulation
         if row["NearestWindow"] > 0:
 
-            new_windows.append(w)
-
             # Substitute restraint values into the windows plumed file
             plumed_wlines = []
             for line in plumed_lines:
@@ -126,23 +124,34 @@ def main(argv):
                     line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
                 plumed_wlines.append(line)
 
+            # Prepare paths
             destination = f"window{ w }"
             os.makedirs(destination, exist_ok=True)
             plumed_wfile = f"{ destination }/plumed_{ w }.dat"
             initial_out = f"{ destination }/initial_conform.pdb"
             print("Initial out", initial_out)
 
+            # Write out the plumed file for the window
+            with open(plumed_wfile, "w") as f:
+                f.writelines(plumed_wlines)
+            
+            # Get paths for extracting sampled conformation
             nw = str(int(row["NearestWindow"]))
             r = str(int(row["NearestRun"]))
             traj = f"window{ nw }/run{ r }/centered_traj.xtc"
             top = f"window{ nw }/run{ r }/w{ nw }_r{ r }.tpr"
             time_frame = int(row["NearestFrame"])
 
+            if not os.path.exists(traj):
+                continue
+
+            new_windows.append(w)
+
+            # Define the gromacs command
             gmx = ["echo", "-e", "24", "|", "gmx", "trjconv", "-f", 
                 traj, "-s", top, "-o", initial_out, "-b", 
                 str(time_frame - 1000), "-dump", str(time_frame), "-n", 
                 "index.ndx", "-nobackup"]
-
             print("\n", " ".join(gmx), "\n")
             
             # Use gromacs subprocess to extract the conformation at the 
@@ -159,14 +168,24 @@ def main(argv):
 
             time.sleep(5)
 
-            # Right out the plumed file for the window
-            with open(plumed_wfile, "w") as f:
-                f.writelines(plumed_restraints)
+    # Get the array sbatch script template file
+    with open("us_array_template.sh", "r") as f:
+        sbatch_lines = f.readlines()  
 
-    # Save the list to a file using pickle
-    import pickle
-    with open(f"window_iterations_{ i + 1 }", "wb") as file:
-        pickle.dump(new_windows, file)
+    # Add the array elements to the sbatch command, depending on which 
+    # new windows will be sampled
+    batch_arr = [str(val + i) for val in new_windows for i in range(4)]
+    batch_str = ",".join(batch_arr)
+    new_batch_lines = []
+    for line in sbatch_lines:
+        if "--array=test" in line:
+            line = line.replace("--array=test", 
+                                f"--array={ batch_str }")
+        new_batch_lines.append(line)
+
+    # Write out the new batch script
+    with open("us_array{ i +1 }.sh", "w") as f:
+        f.writelines(new_batch_lines)
 
     return None
 
