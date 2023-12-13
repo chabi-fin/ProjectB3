@@ -12,6 +12,8 @@ from matplotlib.tri import Triangulation
 from scipy.signal import find_peaks
 import argparse
 import pandas as pd
+import config.settings as c
+from tools import utils, traj_funcs
 
 def main(argv):
 
@@ -21,63 +23,72 @@ def main(argv):
         parser.add_argument("-p", "--path",
                             action = "store",
                             dest = "path",
-                            default = ("/home/lf1071fu/project_b3/simulate/"
-                                        "umbrella_sampling/2d_fes/nobackup"),
-                            help = """Set path to the data directory.""")        
+                            default = ("umbrella/holo_state/nobackup"),
+                            help = ("Set relative path to the data "
+                                "directory."))        
         parser.add_argument("-a", "--angle",
                             action = "store_true",
                             dest = "angle_coord",
                             default = False,
-                            help = """Chose whether the reaction coordinate should be converted into an angle.""")
+                            help = ("Chose whether the reaction "
+                                "coordinate should be converted into an "
+                                "angle."))
         parser.add_argument("-f", "--figpath",
                             action = "store",
                             dest = "fig_path",
-                            default = ("/home/lf1071fu/project_b3/figures/umbrella"
-                                        "/2dfes_apo"),
-                            help = """Set a path destination for the figure.""")  
+                            default = ("umbrella/2dfes_holo"),
+                            help = ("Set a relative path destination for"
+                                " the figure."))  
         parser.add_argument("-b", "--blocks",
                             action = "store",
                             dest = "nblocks",
                             default = 100,
-                            help = """Number of blocks to use in bootstrap analysis.""")            
+                            help = ("Number of blocks to use in "
+                                "bootstrap analysis."))            
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
-                            help = """Chose whether the reweighting should be recomputed.""")
+                            help = ("Chose whether the reweighting "
+                                "should be recomputed."))
         parser.add_argument("-n", "--nobootstrap",
                             action = "store_true",
                             dest = "no_bootstrap",
                             default = False,
-                            help = """Compute the free energy surface without error analysis.""")
-
+                            help = ("Compute the free energy surface "
+                                "without error analysis."))
+        parser.add_argument("-w", "--num_windows",
+                            action = "store",
+                            dest = "num_windows",
+                            default = 150,
+                            help = ("Number of windows used in the "))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
-        print("Command line arguments are ill-defined, please check the arguments")
+        print("Command line arguments are ill-defined, please check the "
+            "arguments.")
         raise
 
-    global home, path_head, nb, cv, nw, kBT
+    global nb, cv, nw, kBT
 
+    # Set key path variables
+    data_path = f"{ c.data_head  }/{ args.path }
+    fig_path = f"{ c.figure_head }/{ args.fig_path }"
+    struct_path = c.struct_head
 
-    # Path variables
-    home = args.path
-    fig_path = args.fig_path
-    path_head = "/home/lf1071fu/project_b3"
-    struct_path = f"{ path_head }/structures"
-
-    # Other variables
+    # Set other variables
     angle_coord = args.angle_coord
     recalc = args.recalc
-    no_bs = args.no_bootstrap
-    nb = int(args.nblocks) # number of blocks for dividing data into blocks for bootstrapping
-    nw = 181 # number of windows (number of simulations) 
-    bs = 10 #200 # number of bootstraps
+    no_bs = args.no_bootstrap # don't do error analysis
+    nb = int(args.nblocks) # number of blocks for bootstrapping
+    nw = args.num_windows # number of windows 
+    bs = 10 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
 
     # Helpful objects for structure alignment
-    core_res, core = get_core_res(path_head)
-    ref_state = mda.Universe(f"{ struct_path }/alignment_ref.pdb", length_unit="nm")
+    core_res, core = traj_funcs.get_core_res()
+    ref_state = mda.Universe(f"{ struct_path }/alignment_ref.pdb", 
+                             length_unit="nm")
 
     # plot_1dfes("fes_catr.dat", "open", fig_path)
     # plot_1dfes("fes_catr.dat", "closed", fig_path)
