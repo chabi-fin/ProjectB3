@@ -26,6 +26,12 @@ def main(argv):
                             help = ("Overwrite the existing csv for the "
                                 "selected iteration if it already "
                                 "exists."))
+        parser.add_argument("-e", "--extra_windows",
+                            action = "store_true",
+                            dest = "extra_windows",
+                            default = False,
+                            help = ("Includes additional windows in the "
+                                "transition region."))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
@@ -36,9 +42,14 @@ def main(argv):
     # Assign command line arg
     iteration = int(args.iteration)
     recalc = args.recalc
+    extra_windows = args.extra_windows
 
     # Get relevant restraint points
     df_pts = pd.read_csv(f"restraint_pts_iteration{ iteration }.csv")
+    
+    # Print the DataFrame of sampled reactions coords data
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.max_rows", None)
 
     # Check if the current iteration already exists
     new_pts_file = f"restraint_pts_iteration{ iteration + 1 }.csv"
@@ -47,10 +58,14 @@ def main(argv):
             "iteration? Add `-r` recalc flag to overrule, exiting now.")
         sys.exit(1)
 
+    # Add additional windows?
+    if extra_windows:
+        df_pts = additional_windows(df_pts, typ=2)
+
     # Get sampled collective variables in one table
-    df_cat = pd.DataFrame(columns=["time", "dot-open", "dot-closed"])
+    df_cat = pd.DataFrame(columns=["time", "opendot", "closeddot"])
     df_pts["InitialConform"] = 0
-    for w in range(1,151):
+    for w in range(1,171):
         for r in range(1,5):
             file = f"window{ w }/run{ r }/COLVAR_{ w }.dat"
             if os.path.exists(file):
@@ -64,11 +79,7 @@ def main(argv):
     # Find all the window restraint points which have no COLVAR data.
     # These are the windows which still need an initial conform
     needs_conform = df_pts[(df_pts["InitialConform"] < 1)]
-    print(needs_conform)
-
-    # Print the DataFrame of sampled reactions coords data
-    pd.set_option("display.max_columns", None)
-    pd.set_option("display.max_rows", None)
+    print(f"NEEDS A CONFORM, { needs_conform.shape }\n", needs_conform, "\n")
 
     # Set up some variables
     restraint_grid = np.array((needs_conform.OpenPoints, 
@@ -80,8 +91,8 @@ def main(argv):
     # Iterate over all the restraints to find the closest conform
     # from the sampled windows
     for g in restraint_grid.T:
-        d, d_ind = cv_min_dist(g[:2], (df_cat["dot-open"], 
-                                    df_cat["dot-closed"]))
+        d, d_ind = cv_min_dist(g[:2], (df_cat["opendot"], 
+                                    df_cat["closeddot"]))
         
         # If a threshold is met, record the trajectory and time frame to
         # access an initial conformation for each missing window
@@ -92,6 +103,7 @@ def main(argv):
             df_pts.loc[df_pts["Window"] == g[2], "NearestFrame"] = t
 
     # New DataFrame to use for extracting data
+    print(f"DF PTS, { df_pts.shape }\n", df_pts, "\n")
     df_pts.to_csv(new_pts_file)
 
     # Initialize window dirs with new conformations
@@ -104,7 +116,7 @@ def main(argv):
 
     new_windows = []
 
-    for i, row in df_filt.iterrows():
+    for i, row in df_pts.iterrows():
         
         w = int(row["Window"])
 
@@ -134,11 +146,11 @@ def main(argv):
             # Write out the plumed file for the window
             with open(plumed_wfile, "w") as f:
                 f.writelines(plumed_wlines)
-            
+        
             # Get paths for extracting sampled conformation
             nw = str(int(row["NearestWindow"]))
             r = str(int(row["NearestRun"]))
-            traj = f"window{ nw }/run{ r }/centered_traj.xtc"
+            traj = f"window{ nw }/run{ r }/fitted_traj.xtc"
             top = f"window{ nw }/run{ r }/w{ nw }_r{ r }.tpr"
             time_frame = int(row["NearestFrame"])
 
@@ -166,7 +178,7 @@ def main(argv):
             print("Output:", stdout)
             print("Error:", stderr)
 
-            time.sleep(5)
+            time.sleep(1)
 
     # Get the array sbatch script template file
     with open("us_array_template.sh", "r") as f:
@@ -174,7 +186,7 @@ def main(argv):
 
     # Add the array elements to the sbatch command, depending on which 
     # new windows will be sampled
-    batch_arr = [str(val + i) for val in new_windows for i in range(4)]
+    batch_arr = [str((val-1)*4 + i) for val in new_windows for i in range(1,5)]
     batch_str = ",".join(batch_arr)
     new_batch_lines = []
     for line in sbatch_lines:
@@ -183,11 +195,51 @@ def main(argv):
                                 f"--array={ batch_str }")
         new_batch_lines.append(line)
 
+    print(new_windows)
+    print(batch_arr)
+
     # Write out the new batch script
-    with open("us_array{ i +1 }.sh", "w") as f:
+    with open(f"us_array_{ iteration + 1 }.sh", "w") as f:
         f.writelines(new_batch_lines)
 
     return None
+
+def additional_windows(df, typ=1):
+    """Adds restraint values for more windows in the transition region. 
+
+    Parameters 
+    ----------
+    df : pd.DataFrame
+        DataFrame with the original restraint points.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        DataFrame with the original and supplementary restraint points.
+
+    """
+    # determine the point positions
+    if typ == 1:
+        open_extras = np.linspace((1 + 5/6), (5 + 1/6), num=10, endpoint=True)
+        closed_extras = np.linspace(1.5, (4 + 5/6), num=10, endpoint=True)
+        windows = np.arange(151, 161)
+    elif typ == 2:
+        open_extras = np.linspace((2), (5 + 1/3), num=10, endpoint=False)
+        closed_extras = np.linspace((1 + 2/3), (5), num=10, endpoint=False)
+        windows = np.arange(161, 171)
+
+    # Drop unnamed columns
+    df = df.drop(columns=["Unnamed: 0", "Unnamed: 0.1"]) #"Unnamed: 0.1.1"])
+
+    # Initialize new rows to a DataFrame
+    df_new = pd.DataFrame({"OpenPoints" : open_extras, 
+                "ClosedPoints" : closed_extras, 
+                "Window": windows})
+
+    # Combine to one table
+    df = pd.concat([df, df_new], ignore_index=True).fillna(0)
+
+    return df
 
 def cv_min_dist(grid_pt, data):
     """Finds the nearest sampled data to the desired restraint point.
@@ -217,7 +269,7 @@ def cv_min_dist(grid_pt, data):
     min_ind = np.argmin(d)
     return min_d, min_ind 
 
-def add_colvar_data(window, run, file):
+def add_colvar_data(window, run, file, stride=10):
     """Adds COLVAR data to a DataFrame from the sampled window.
 
     Parameters
@@ -235,12 +287,13 @@ def add_colvar_data(window, run, file):
 
     """
     df = pd.read_csv(file, comment="#", delim_whitespace=True, 
-                       names=["time", "dot-open", "dot-closed",
-                              "res-bias", "res-force"])
+                       names=["time", "opendot", "closeddot",
+                              "theta1", "theta2", "restraint.bias", 
+                              "restraint.force2"])
     df["window"] = int(window)
     df["run"] = int(run)
 
-    return df[10:10000]
+    return df[::stride]
 
 if __name__ == "__main__":
     main(sys.argv)
