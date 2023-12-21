@@ -107,13 +107,15 @@ def main(argv):
             tops[f"af {i}"] = f"{ af_path }/af{i}/nobackup/{ top }"
     for p in data_paths:
         print("\n", p, "\n")
-        n = p.split("/")[-2]
+        n = p.split("/")[-1]
+        # Check if topology file exists
+        utils.process_topol(p, top)
         trajs[n] = f"{ p }/{ xtc }"
         tops[n] = f"{ p }/{ top }"
 
     # Get the beta-vector data as a DataFrame
     df_path = f"{ data_head }/cat_trajs/dataframe_beta_vec_{ state }.csv"
-    df = get_vec_dataframe(trajs, tops, df_path, r1, r2)
+    df = get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state)
 
     # Gets restraint points as needed
     if restrain:
@@ -135,17 +137,15 @@ def get_ref_vecs(struct_path, r1, r2):
                             length_unit="nm")
     closed_ref = mda.Universe(f"{ struct_path }/closed_ref_state.pdb", 
                               length_unit="nm")
-    ref_state = mda.Universe(f"{ struct_path }/alignment_struct.pdb", 
+    ref_state = mda.Universe(f"{ struct_path }/ref_all_atoms.pdb", 
                              length_unit="nm")
 
     # Indicies of the inflexible residues
     core_res, core = traj_funcs.get_core_res()
 
     # Align the traj and ref states to one structure
-    align.AlignTraj(open_ref, ref_state, select=core, 
-                    in_memory=True).run()
-    align.AlignTraj(closed_ref, ref_state, select=core, 
-                    in_memory=True).run()
+    align.alignto(open_ref, ref_state, select=core)
+    align.alignto(closed_ref, ref_state, select=core)
 
     # Determine open + closed reference beta flap vectors in units of 
     # Angstrom
@@ -163,10 +163,10 @@ def get_ref_vecs(struct_path, r1, r2):
                                         f"name CA and resnum { r2 }"
                                         ).positions[0]
     vec_closed = r2_closed/10 - r1_closed/10
-
+    
     return ref_state, vec_open, vec_closed
 
-def get_vec_dataframe(trajs, tops, df_path, r1, r2):
+def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state):
     """
     """
     if not os.path.exists(df_path) or recalc: 
@@ -178,6 +178,8 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2):
         print("DETERMINING REACTION COORDINATES FROM TRAJ DATA...")
 
         for name, traj in trajs.items():
+
+            print(name)
             
             u = mda.Universe(tops[name], traj, topology_format="ITP", 
                              length_unit="nm")
@@ -226,33 +228,39 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2):
 
     return df
 
-def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False):
+def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
+    ):
     # Plot the two products over the traj
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
 
     def get_color(traj):
+        "Makes a formatted lable for plotting."
+        colors = {"af 1" : "#ff5500", "af 2" : "#ffcc00", "af 3" : "#d9ff00", 
+            "af 4" : "#91ff00", "af 5" : "#2bff00", "af 6" : "#00ffa2",
+            "af 7" : "#00ffe1", "af 8" : "#00e5ff", "af 9" : "#0091ff",
+            "K57G" : "#ebba34", "double_mut" : "#36b3cf", "E200G" : "#8442f5"}#
+
         if "open" in traj:
             return "#EAAFCC"
         elif "closed" in traj:
             return "#A1DEA1"
-        else: 
-            colors = {"af 1" : "#ff5500", "af 2" : "#ffcc00", "af 3" : "#d9ff00", 
-              "af 4" : "#91ff00", "af 5" : "#2bff00", "af 6" : "#00ffa2",
-              "af 7" : "#00ffe1", "af 8" : "#00e5ff", "af 9" : "#0091ff",
-              "K57G" : "#ebba34", "double_mut" : "#36b3cf", "E200G" : "#8442f5"}
+        elif traj in colors.keys():
             return colors[traj]
+        else:
+            return None
 
     def get_label(traj):
-        
-        if "af" in traj:
+        "Makes a formatted lable for plotting."
 
-            return traj
-        
         labels = {"apo_open" : "apo open", "apo_closed" : "apo closed", 
                   "holo_open" : "holo open", "holo_closed" : "holo closed",
-                  "K57G" : "K57G", "double_mut" : "K57G + E200G", "E200G" : "E200G"}
+                  "K57G" : "K57G", "double_mut" : "K57G + E200G", 
+                  "E200G" : "E200G"}
         
-        return labels[traj]
+        if traj in labels.keys():
+            return labels[traj]
+        else:
+            return traj
 
     trajs = unique_values = df['traj'].unique().tolist()
     print(trajs)
@@ -266,13 +274,15 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False):
 
         if angles_coord:
 
-            ax.scatter(traj_df["angle-open"], traj_df["angle-closed"], label=get_label(t), 
-                        alpha=1, marker="o", color=get_color(t), s=150)       
+            ax.scatter(traj_df["angle-open"], traj_df["angle-closed"], 
+                        label=get_label(t), alpha=1, marker="o", s=150)
+                        # color=get_color(t), s=150)       
 
         else:
 
             ax.scatter(traj_df["dot-open"], traj_df["dot-closed"], label=get_label(t), 
-                        alpha=1, marker="o", color=get_color(t), s=150)
+                        alpha=1, marker="o", s=150)
+                        #color=get_color(t))
 
     # Add in reference positions
     if angles_coord: 
