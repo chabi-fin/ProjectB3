@@ -36,18 +36,24 @@ def main(argv):
                             default = "",
                             help = """Set a path destination for the 
                                 figure.""")
-        parser.add_argument("-t", "--topol",
+        parser.add_argument("-t", "--topols",
                             action = "store",
-                            dest = "topol",
-                            default = "npt.pdb",
-                            help = """File name for topology, inside the 
+                            dest = "topols",
+                            nargs = "+",
+                            default = "holo_open.tpr holo_closed.tpr",
+                            help = """File name for topologies, inside the 
                                 path directory.""")   
         parser.add_argument("-x", "--xtc",
                             action = "store",
                             dest = "xtc",
                             default = "fitted_traj_100.xtc",
                             help = """File name for trajectory, inside 
-                                the path directory.""")      
+                                the path directory.""")
+        parser.add_argument("-w", "--workdir",
+                            action = "store",
+                            dest = "workdir",
+                            default = "umbrella/holo_state",
+                            help = "Main directory head for the FES.")      
         parser.add_argument("-d", "--dataframe",
                             action = "store",
                             dest = "df",
@@ -62,11 +68,11 @@ def main(argv):
         raise
 
     # Assign group selection from argparse 
-    wrkdir = os.getcwd()
+    wrkdir = f"{ config.data_head }/{ args.workdir }"
     data_paths = [f"{ config.data_head }/{ p }" for p in args.paths.split(" ")]
     fig_path = f"{ config.figure_head }/{ args.fig_path }"
     recalc = args.recalc
-    topol = args.topol
+    topols = [t for t in args.topols.split(" ")]
     xtc = args.xtc
     df_path = f"{ wrkdir }/{ args.df }"
 
@@ -77,11 +83,11 @@ def main(argv):
     # Make a list of trajectory paths
     traj_paths = {}
     top_paths = {}
-    for p in data_paths:
+    for p, top in zip(data_paths, topols):
         print("\n", p, "\n")
         n = p.split("/")[-2]
         traj_paths[n] = f"{ p }/{ xtc }"
-        top_paths[n] = f"{ p }/{ topol }"
+        top_paths[n] = f"{ p }/{ top }"
 
     # Get a table of the restraint points
     df_pts = pd.read_csv(df_path)
@@ -89,7 +95,7 @@ def main(argv):
     # Alignment and reference structures
     align = False
     if align:
-        make_align_ref(wrkdir)
+        make_align_ref(f"{ wrkdir }/windows_setup2")
         u_open = mda.Universe(f"{ config.struct_head }/open_ref_state.pdb")
         u_closed = mda.Universe(f"{ config.struct_head }/closed_ref_state.pdb")
         traj_funcs.do_alignment(u_open)
@@ -129,9 +135,11 @@ def main(argv):
     plt.savefig(f"{ wrkdir }/initial_window_points.png", dpi=300)
     plt.close()
 
-    with open("plumed.dat", "r") as f:
+    with open(f"{ wrkdir }/plumed.dat", "r") as f:
 
         plumed_lines = f.readlines() 
+
+    batch_arr = []
 
     # OpenPoint,ClosedPoint 
     for i, row in df_pts.iterrows():
@@ -148,7 +156,7 @@ def main(argv):
                 line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
             plumed_restraints.append(line)
 
-        destination = f"{ config.data_head }/umbrella/holo_state/window{ w }"
+        destination = f"{ config.data_head }/umbrella/holo_state/windows_setup2/window{ w }"
         os.makedirs(destination, exist_ok=True)
         plumed_file = f"{ destination }/plumed_{ w }.dat"
         initial_out = f"{ destination }/initial_conform.pdb"
@@ -161,12 +169,33 @@ def main(argv):
 
             gmx = ["echo", "24", "|", "gmx22", "trjconv", "-f", traj, "-s", top, "-o", initial_out, "-b", str(time_frame - 1000), "-dump", str(time_frame), "-n", index, "-nobackup"]
             
-            output = subprocess.Popen(" ".join(gmx), stdout=subprocess.PIPE, shell=True)
+            #output = subprocess.Popen(" ".join(gmx), stdout=subprocess.PIPE, shell=True)
 
-            time.sleep(5)
+            #time.sleep(1)
+
+            batch_ids = [4 * (w - 1) + r for r in range(1,5)]
+            batch_arr.extend(batch_ids)
 
         with open(plumed_file, "w") as f:
             f.writelines(plumed_restraints)
+
+    # Get the array sbatch script template file
+    with open(f"{ wrkdir }/us_array_template.sh", "r") as f:
+        sbatch_lines = f.readlines()
+
+    batch_arr = list(map(lambda x : str(int(x)), batch_arr))
+    batch_str = ",".join(batch_arr)
+    print(batch_str)
+    new_batch_lines = []
+    for line in sbatch_lines:
+        if "--array=test" in line:
+            line = line.replace("--array=test",
+                                f"--array={ batch_str }")
+        new_batch_lines.append(line)
+
+    # Write out the new batch script
+    with open(f"{ wrkdir }/windows_setup2/us_array_initial.sh", "w") as f:
+        f.writelines(new_batch_lines)
 
 def cv_min_dist(grid_pt, data):
     "How far is the grid point to the nearest data point?"
@@ -177,7 +206,10 @@ def cv_min_dist(grid_pt, data):
     return min_d, min_ind 
 
 def make_align_ref(wrkdir):
-    """
+    """Writes to pdb the subset of atoms for alignment and biasing.
+
+    The original atom indicies must be preservered since this is what 
+    plumed is using to identify atoms from the reference file.
 
     Parameters
     ----------
@@ -189,18 +221,30 @@ def make_align_ref(wrkdir):
     None.
 
     """
-    core_res, core = traj_funcs.get_core_res() 
     ref_file = f"{ wrkdir }/ref.pdb"
 
+    # Define the atom selection based on alignment residues and the 
+    # Beta vector c-alpha atoms
     vec_select = (" or (resid 206 and name CA) or "
                   "(resid 215 and name CA))")
+    core_res, core = traj_funcs.get_core_res() 
 
-    print(core[:-1] + vec_select)
-
+    # Grab the atom selection
     u = mda.Universe(f"{ config.struct_head }/ref_all_atoms.pdb")
     core_and_vec = u.select_atoms(core[:-1] + vec_select)
-    core_and_vec.write(ref_file)
-    print(f"Wrote reference alignment structure to { ref_file }.")
+
+    # Write the relevant lines to a pdb file
+    with open(ref_file, 'w') as pdb_file:
+        for atom in core_and_vec:
+            pdb_line = (f"ATOM  {(atom.ix + 1):5} {atom.name:<4}"
+                        f"{atom.resname:<3} X {atom.resid:>4}    "
+                        f"{atom.position[0]:8.3f}{atom.position[1]:8.3f}"
+                        f"{atom.position[2]:8.3f}{atom.occupancy:6.2f}"
+                        f"{atom.bfactor:6.2f}          \n")
+            pdb_file.write(pdb_line)
+
+    print(f"Wrote reference alignment structure for plumed to "
+          f"{ ref_file }.")
 
     return None
 
