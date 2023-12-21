@@ -16,3 +16,7 @@ toxin_resid = 544
 beta_flap_group = "backbone and resid 195-218"
 alpha_flap_group = "backbone and resid 219-231"
 active_res_group = "resid 110 or resid 155"
+
+# Aesthetics
+open_color = "#A1DEA1"
+closed_color = "#EAAFCC"
