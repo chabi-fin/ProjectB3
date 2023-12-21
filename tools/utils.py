@@ -161,3 +161,33 @@ def save_df(df, df_path, hierarchical=False,
     make_log(df_name, log_file, log_type)
 
     return None
+
+def process_topol(data_path, topol_out):
+    """Process topology to remove solvent and ions. 
+
+    Parameters
+    ----------
+    data_path : str
+        Path to the topology file.
+    topol_out : str
+        Name of the stripped topology file. 
+
+    Returns
+    -------
+    None.
+    
+    """
+    topol_out_path = f"{ data_path }/{ topol_out }"
+    if not os.path.exists(topol_out_path):
+        with open(f"{ data_path }/topol.top", "r") as file:
+            lines = file.readlines()
+
+        # Otherwise, generate topology without solvent or counterions
+        filtered_lines = [line for line in lines if \
+                            all(not line.startswith(s) \
+                            for s  in ["SOL", "NA", "CL"])]
+
+        with open(topol_out_path, 'w') as file:
+            file.writelines(filtered_lines)
+
+    return topol_out_path 
