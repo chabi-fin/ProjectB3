@@ -114,16 +114,8 @@ def get_datas(data_paths, recalc):
             )
 
             # Get topol file or edit base topology
-            topol = f"{ path }/topol_Pro_Lig.top"
-            if not os.path.exists(topol):
-                with open(f"{ path }/topol.top", "r") as file:
-                    lines = file.readlines()
-
-                filtered_lines = [line for line in lines \
-                    if all(not line.startswith(s) \
-                    for s in ["SOL", "NA", "CL"])]
-                with open(topol, 'w') as file:
-                    file.writelines(filtered_lines)
+            topol = f"{ path }/topol_Pro_Lig.top"#
+            utils.process_topol(path, topol)
 
             # Load in universe objects for the simulation and the 
             # reference structures

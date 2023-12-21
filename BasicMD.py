@@ -78,16 +78,7 @@ def main(argv):
     xtc = f"{ data_path }/{ args.xtc }"
 
     # Check if topology file exists
-    if not os.path.exists(topol):
-        with open(f"{ data_path }/topol.top", "r") as file:
-            lines = file.readlines()
-
-        # Otherwise, generate topology without solvent or counterions
-        filtered_lines = [line for line in lines if \
-                          all(not line.startswith(s) \
-                          for s  in ["SOL", "NA", "CL"])]
-        with open(topol, 'w') as file:
-            file.writelines(filtered_lines)
+    utils.process_topol(data_path, args.topol)
 
     # Load in universe objects for the simulation and the reference
     # structures
