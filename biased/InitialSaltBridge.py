@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import os
 import argparse
+import subprocess
 import matplotlib.pyplot as plt
 import MDAnalysis as mda
 from MDAnalysis.analysis.distances import distance_array
@@ -11,38 +12,39 @@ from tools import utils, traj_funcs
 from biased.NewWindowConfs import add_colvar_data, cv_min_dist
 from VectorCoordCombo import three_point_function, get_ref_vecs
 import pandas as pd
+from Bio import PDB
 
 def main(argv):
 
     try:
         parser = argparse.ArgumentParser()
-
-        parser.add_argument("-r", "--recalc",
-                            action = "store_true",
-                            dest = "recalc",
-                            default = False,
-                            help = ("Chose whether the trajectory arrays"
-                                "should  be recomputed."))
-        parser.add_argument("-f", "--figpath",
+        parser.add_argument("-m", "--mutant",
                             action = "store",
-                            dest = "figpath",
+                            dest = "mutant",
                             default = None,
-                            help = ("Set a path destination for the "
-                                "figure."))
-        parser.add_argument("-w", "--workdir",
-                            action = "store",
-                            dest = "workdir",
-                            default = None,
-                            help = ("Set a path for the working dir."))
+                            help = ("Select the mutation experiment, "
+                                "native, K57G, E200G or double_mut."))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
         print("Command line arguments are ill-defined, please check the "
             "arguments")
         raise
-    
-    # Set command line arguement variables
-    workdir = f"{ c.data_head }/{ args.workdir}"
+
+    # Set command line arguement variable
+    mut = args.mutant
+
+    # Define four mutation experiments
+    experiment = {"native" : [], "K57G" : [57], "E200G" : [200],
+                "double_mut" : [57, 200]}
+    if mut not in experiment.keys():
+        print(f"Experiment '{ mut }' not a valid choice. Select a valid " 
+            "input for mutation experiment: native, K57G, E200G or "
+            "double-mut.")
+        sys.exit(1)
+
+    # Set the directory for the experiment
+    workdir = f"{ c.data_head }/umbrella/salt_bridge/{ mut }"
     print("Working dir :", workdir)
 
     # Load in universe objects for the simulation and the reference
@@ -66,8 +68,9 @@ def main(argv):
         endpoint=True)
 
     # Make a table of windows and salt-bridge restraint points
+    # Divide by 10 to converst distance from AA (MDAnalysis) to nm (plumed)
     df = pd.DataFrame({"Window" : np.arange(1,31),
-                       "RestraintPoint" : restraint_pts})
+                       "RestraintPoint" : restraint_pts / 10})
     df = df.assign(NearestWindow=0, NearestRun=0, NearestFrame=0)
 
     # Make a table of sampled beta-vec values to select starting confoms
@@ -97,45 +100,33 @@ def main(argv):
     # Save DataFrame containing the initial conform data
     print(f"DF PTS, { df.shape }\n", df, "\n")
     utils.save_df(df, f"{ workdir }/salt_bridge_restraints.csv")
-    sys.exit(1)
 
     # Get the plumed template file
-    # TO DO: write initial plumed file
     with open("plumed.dat", "r") as f:
         plumed_lines = f.readlines()  
 
     # Set up the plumed file and the initial conform as a pdb in the 
     # directories for each window
     for _, row in df.iterrows():
+
+        # Select which residues should be mutated to GLY
+        mutate = experiment[mut]
         
-        set_up_window(row, plumed_lines, workdir)
+        # Prepare initial conformations and plumed files for the 
+        # particular mutation experiment
+        set_up_window(row, plumed_lines, mutate, workdir, conf_path)
         
-def set_up_window(row, plumed_lines, workdir, conf_path):
+def set_up_window(row, plumed_lines, mutate, workdir, conf_path):
     """
     """
     w = int(row["Window"])
-
-    # Substitute restraint values into the windows plumed file
-    plumed_wlines = []
-    for line in plumed_lines:
-        # TO DO
-        if "RESTRAINT_OPEN" in line:
-            line = line.replace("RESTRAINT_OPEN", 
-                                str(row["OpenPoints"]))
-        if "COLVAR_WINDOW" in line:
-            line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
-        plumed_wlines.append(line)
 
     # Prepare paths
     destination = f"{ workdir }/window{ w }"
     os.makedirs(destination, exist_ok=True)
     plumed_wfile = f"{ destination }/plumed_{ w }.dat"
-    initial_out = f"{ destination }/initial_conform.pdb"
-    print("Initial out", initial_out)
-
-    # Write out the plumed file for the window
-    with open(plumed_wfile, "w") as f:
-        f.writelines(plumed_wlines)
+    extracted_out = f"{ destination }/extracted_conform.pdb"
+    print("extracted out", extracted_out)
 
     # Get paths for extracting sampled conformation
     nw = str(int(row["NearestWindow"]))
@@ -149,8 +140,8 @@ def set_up_window(row, plumed_lines, workdir, conf_path):
         return None
 
     # Define the gromacs command
-    gmx = ["echo", "-e", "1", "|", "gmx22", "trjconv", "-f", 
-        traj, "-s", top, "-o", initial_out, "-b", 
+    gmx = ["echo", "1", "|", "gmx22", "trjconv", "-f", 
+        traj, "-s", top, "-o", extracted_out, "-b", 
         str(time_frame - 1000), "-dump", str(time_frame), "-nobackup"]
     print("\n", " ".join(gmx), "\n")
     
@@ -166,9 +157,93 @@ def set_up_window(row, plumed_lines, workdir, conf_path):
     print("Output:", stdout)
     print("Error:", stderr)
 
-    time.sleep(1)
+    # Edit conformations to produce the desired mutant
+    # Load the PDB file
+    pdb_parser = PDB.PDBParser(QUIET=True)
+    structure = pdb_parser.get_structure("mutated", extracted_out)
+    for res in mutate:
+        structure = mutate_to_glycine(structure, res)
+
+    # Write the mutated structure to a new PDB file
+    mutated_pdb = f"{ destination }/mutated.pdb"
+    io = PDB.PDBIO()
+    io.set_structure(structure)
+    io.save(mutated_pdb)
+    fix_gly_names(mutated_pdb)
+
+    # Get the atom numbers for CA 57 and CA 200
+    u = mda.Universe(mutated_pdb)
+    ind_57 = u.select_atoms("resid 57 and name CA")[0].ix
+    ind_200 = u.select_atoms("resid 200 and name CA")[0].ix
+
+    # Substitute restraint values into the windows plumed file
+    plumed_wlines = []
+    for line in plumed_lines:
+        if "RESTRAINT_SALT" in line:
+            line = line.replace("RESTRAINT_SALT", 
+                                str(np.round(row["RestraintPoint"], 3)))
+        if "ATOM57" in line:
+            line = line.replace("ATOM57", str(ind_57 + 1))
+        if "ATOM200" in line:
+            line = line.replace("ATOM200", str(ind_200 + 1))
+        if "COLVAR_WINDOW" in line:
+            line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
+        plumed_wlines.append(line)
+
+    # Write out the plumed file for the window
+    with open(plumed_wfile, "w") as f:
+        f.writelines(plumed_wlines)
 
     return 1
+
+def mutate_to_glycine(structure, residue_id):
+    """
+    """
+    gly_names = ["N", "H", "CA", "HA1", "HA2", "C", "O"]
+    # Find the specified residue
+    for residue in structure[0]["A"]:
+        if residue.id[1] == residue_id:
+            # Mutate the residue to glycine
+            residue.resname = "GLY"
+            residue.id = (" ", residue_id, " ")
+
+            # Remove atoms extraneous to glycine
+            removal_atoms = []
+            for atom in residue.get_atoms():
+                # Modify the atom name if needed
+                if atom.name == "HA": 
+                    atom.name = "HA1"
+                elif atom.name == "CB":
+                    atom.name = "HA2"
+                if not any([atom.name == a for a in gly_names]):
+                    removal_atoms.append(atom.name)
+
+            for atom in removal_atoms:
+                residue.detach_child(atom)
+
+    return structure
+
+def fix_gly_names(pdb):
+    # Get the plumed template file
+    with open(pdb, "r") as f:
+        pdb_lines = f.readlines()  
+
+    # Fix the atom names of glycine
+    pdb_new_lines = []
+    for line in pdb_lines:
+        if "HA  GLY A  57" in line:
+            line = line.replace("HA  GLY A  57", "HA1 GLY A  57")
+        if "CB  GLY A  57" in line:
+            line = line.replace("CB  GLY A  57", "HA2 GLY A  57")
+        if "HA  GLY A  200" in line:
+            line = line.replace("HA  GLY A  200", "HA1 GLY A  200")
+        if "CB  GLY A  200" in line:
+            line = line.replace("CB  GLY A  200", "HA2 GLY A  200")
+        pdb_new_lines.append(line)
+
+    # Write out the pdb file
+    with open(pdb, "w") as f:
+        f.writelines(pdb_new_lines)
 
 def get_sample_points(num_us, workdir):
     """Finds relevant points in the beta-vec space. 
@@ -249,7 +324,6 @@ def plot_rxn_coord(samples, fig_path, state):
     plt.legend(fontsize=18)
 
     utils.save_figure(fig, f"{ fig_path }/{ state }_beta_vec.png")
-    plt.show()
     plt.close()
 
 def get_df_cat(conf_path):
