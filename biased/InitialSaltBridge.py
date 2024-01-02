@@ -235,10 +235,10 @@ def fix_gly_names(pdb):
             line = line.replace("HA  GLY A  57", "HA1 GLY A  57")
         if "CB  GLY A  57" in line:
             line = line.replace("CB  GLY A  57", "HA2 GLY A  57")
-        if "HA  GLY A  200" in line:
-            line = line.replace("HA  GLY A  200", "HA1 GLY A  200")
-        if "CB  GLY A  200" in line:
-            line = line.replace("CB  GLY A  200", "HA2 GLY A  200")
+        if "HA  GLY A 200" in line:
+            line = line.replace("HA  GLY A 200", "HA1 GLY A 200")
+        if "CB  GLY A 200" in line:
+            line = line.replace("CB  GLY A 200", "HA2 GLY A 200")
         pdb_new_lines.append(line)
 
     # Write out the pdb file
