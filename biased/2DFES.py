@@ -12,7 +12,9 @@ from matplotlib.tri import Triangulation
 from scipy.signal import find_peaks
 import argparse
 import pandas as pd
-import config.settings as c
+sys.path.insert(0, "/home/lf1071fu/project_b3")
+sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
+import config.settings as config
 from tools import utils, traj_funcs
 
 def main(argv):
@@ -36,7 +38,7 @@ def main(argv):
         parser.add_argument("-f", "--figpath",
                             action = "store",
                             dest = "fig_path",
-                            default = ("umbrella/2dfes_holo"),
+                            default = ("umbrella/holo_state"),
                             help = ("Set a relative path destination for"
                                 " the figure."))  
         parser.add_argument("-b", "--blocks",
@@ -54,13 +56,13 @@ def main(argv):
         parser.add_argument("-n", "--nobootstrap",
                             action = "store_true",
                             dest = "no_bootstrap",
-                            default = False,
+                            default = True,
                             help = ("Compute the free energy surface "
                                 "without error analysis."))
         parser.add_argument("-w", "--num_windows",
                             action = "store",
                             dest = "num_windows",
-                            default = 150,
+                            default = 170,
                             help = ("Number of windows used in the "))
         args = parser.parse_args()
 
@@ -69,43 +71,47 @@ def main(argv):
             "arguments.")
         raise
 
-    global nb, cv, nw, kBT
+    global nb, cv, nw, kBT, angle_coord, recalc, home
 
     # Set key path variables
-    data_path = f"{ c.data_head  }/{ args.path }
-    fig_path = f"{ c.figure_head }/{ args.fig_path }"
-    struct_path = c.struct_head
+    home = f"{ config.data_head  }/{ args.path }"
+    fig_path = f"{ config.figure_head }/{ args.fig_path }"
+    struct_path = config.struct_head
 
     # Set other variables
     angle_coord = args.angle_coord
     recalc = args.recalc
     no_bs = args.no_bootstrap # don't do error analysis
     nb = int(args.nblocks) # number of blocks for bootstrapping
-    nw = args.num_windows # number of windows 
+    nw = int(args.num_windows) # number of windows 
     bs = 10 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
 
     # Helpful objects for structure alignment
     core_res, core = traj_funcs.get_core_res()
-    ref_state = mda.Universe(f"{ struct_path }/alignment_ref.pdb", 
+    ref_state = mda.Universe(f"{ struct_path }/ref_all_atoms.pdb", 
                              length_unit="nm")
-
-    # plot_1dfes("fes_catr.dat", "open", fig_path)
-    # plot_1dfes("fes_catr.dat", "closed", fig_path)
 
     vec_open, vec_closed = get_ref_vecs(struct_path, core, ref_state)
 
-    np_ave_files = [f"{ home }/hist_ave.npy", f"{ home }/hist_sq_ave.npy", f"{ home }/bin_counter.npy"]
+    np_ave_files = [f"{ home }/hist_ave.npy", 
+                    f"{ home }/hist_sq_ave.npy", 
+                    f"{ home }/bin_counter.npy"]
     bs_path = f"{ home }/bootstrap_files"
     if not os.path.exists(bs_path):
         os.makedirs(bs_path)
 
+    # Make the FES without error estimates 
     if no_bs:
 
-        fes = get_no_bs_fes(bs_path)
+        fes = get_no_bs_fes(home, bs_path)
 
         # Make the 2D FES plot
-        plot_2dfes(fes.odot, fes.cdot, fes.ffr, None)
+        plot_2dfes(fes, vec_open, vec_closed, fig_path)
+        
+        # Also make the 1D FES plots
+        for rxn_coord in ["open", "closed", "sb"]:
+            plot_1dfes(bs_path, rxn_coord, fig_path)
 
     elif not all(list(map(lambda x : os.path.exists(x), np_ave_files))) or recalc: 
 
@@ -177,36 +183,41 @@ def main(argv):
     # Calculate free energy surface from histogram averages and 
     # free energy errors from the histograms, see expressions in ex-5 
     # https://www.plumed.org/doc-v2.8/user-doc/html/masterclass-21-2.html
-    ave = ave / bs
-    # fes = convert_fes(hist.odot, hist.cdot, ave)
+    # ave = ave / bs
+    # # fes = convert_fes(hist.odot, hist.cdot, ave)
 
-    var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
-    fes = - kBT * np.log(ave)
-    error = np.sqrt( var )
-    ferr = error / ave
+    # var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
+    # fes = - kBT * np.log(ave)
+    # error = np.sqrt( var )
+    # ferr = error / ave
 
     # Make the 2D FES plot
-    plot_2dfes(pfes.odot, pfes.cdot, fes, ferr)
+    # plot_2dfes(pfes.odot, pfes.cdot, fes, ferr)
 
     # Make the error estimate plot for the 2D FES
 
     return None
 
-def plot_2dfes(open_bins, closed_bins, fes, ferr):
+def plot_2dfes(fes, vec_open, vec_closed, fig_path):
     """Plots the 2D FES as a colorbar + contour map.
 
-    open_bins : np.ndarray
-        Bin positions for the beta vec dot product with the open ref.
-    closed_bins : np.ndarray
-        Bin positions for the beta vec dot product with the closed ref.
-    fes_o : np.ndarray
-        Free energies at the grid positions.
-    ferr : np.ndarray
-        Errors in the free energies at the grid positions. 
+    fes : pd.DataFrame
+        The table containing discretized free energy surface data. 
+    vec_open : float
+        The reference beta-vector for the open conformation.
+    vec_closed : float
+        The reference beta-vector for the closed conformation.
+    fig_path : str
+        Path for storing the figure. 
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
 
+    # Get the relevant discretized arrays from table columns
+    open_bins, closed_bins = fes.odot, fes.cdot 
+    fes, ferr = fes.ffr, None
+
     mask = ((-1e2 < fes) & (fes < 1e2))
+    # mask = (fes < 1e6)
 
     x, y = open_bins[mask], closed_bins[mask]
     z = fes[mask]
@@ -230,9 +241,7 @@ def plot_2dfes(open_bins, closed_bins, fes, ferr):
     # zmin_l = np.min(np.array([f for x, f in zip(fes_r.opendot, fes_r.ffr) if ((f > -80) and (x > 4))]))
     # z = [ z - zmin_g for z in fes_r.ffr if -80 < z < 80 ]
     # print(f"Global min: { zmin_g } kJ/mol\tLocal min: { zmin_l } kJ/mol")
-    plt.show()
-    sys.exit(1)
-    
+
     tri = Triangulation(x, y)
 
     # Create contour lines on the XY plane using tricontour
@@ -246,8 +255,7 @@ def plot_2dfes(open_bins, closed_bins, fes, ferr):
     cbar.set_label(r'$F(\vec{\upsilon} \cdot \vec{\upsilon}_{open}, \vec{\upsilon} \cdot \vec{\upsilon}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
     cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
-    #ax.clabel(contours, inline=1, fontsize=20)
-
+    ax.clabel(contours, inline=1, fontsize=20)
 
     # Find minima
     # minima_indices, _ = find_peaks(-np.array(z), prominence=70)
@@ -274,8 +282,6 @@ def plot_2dfes(open_bins, closed_bins, fes, ferr):
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
-    for i in ["top","bottom","left","right"]:
-        ax.spines[i].set_linewidth(2)
     if angle_coord:
         ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
         ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
@@ -287,35 +293,12 @@ def plot_2dfes(open_bins, closed_bins, fes, ferr):
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=24)
+    plt.show()
 
     if angle_coord:
-        plt.savefig(f"{ fig_path }/2dfes_angles.png", dpi=300)
+        utils.save_figure(fig, f"{ fig_path }/2dfes_angles.png")
     else:
-        plt.savefig(f"{ fig_path }/2dfes.png", dpi=300)
-
-def get_core_res(path_head):
-    """Finds the core residues which are immobile across the conformational states.
-
-    Uses data from the combined simulation of the apo states open and closed simulations,
-    to get the calphas of the residues with an RMSF below 1.5.
-
-    Returns
-    -------
-    core_res : nd.array
-        Indicies for the less mobile residues across conformational states. 
-    core : str
-        Selection string for the core residues.
-
-    """
-    core_res_path = f"{ path_head }/structures"
-    core_res = np.load(f"{ core_res_path }/core_res.npy")
-
-    aln_str = "protein and name CA and ("
-    core_open = [f"resid {i} or " for i in core_res]
-    core_closed = [f"resid {i + 544} or " for i in core_res]
-    core = aln_str + "".join((core_open + core_closed))[:-4] + ")"
-
-    return core_res, core
+        utils.save_figure(fig, f"{ fig_path }/2dfes.png")
 
 def get_ref_vecs(struct_path, core, ref_state):
     """Calculates the beta-vectors for the reference structures.
@@ -387,99 +370,108 @@ def calc_theta(vec_ref, vec_sim):
 
     return theta
 
-def plot_1dfes(dat_path, conform, fig_path):
-    # Plot FES wrt the open state dot product
-    # fes_hdot=plumed.read_as_pandas(dat_path).replace([np.inf, -np.inf], np.nan).dropna()
-    # plt.plot(fes_hdot.hdot,fes_hdot.ffhdot,label="original")
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
-    # fes_opendotb=plumed.read_as_pandas("fes_opendot_cat.dat").replace([np.inf, -np.inf], np.nan).dropna()
-    # ax.plot(fes_opendotb.opendot,fes_opendotb.ffopendot,label="biased")
-    fes = plumed.read_as_pandas(dat_path).replace([np.inf, -np.inf], np.nan).dropna()
-    if conform == "open":
-        ax.plot(fes.opendot,fes.ffopendotr,label="reweighted")
-        ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$F(\vec{\upsilon} \cdot \vec{\upsilon}_{open})$ (kJ / mol)", labelpad=5, fontsize=24)
-    elif conform == "closed":
-        ax.plot(fes.closeddot,fes.ffcloseddotr,label="reweighted")
-        ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$F(\vec{\upsilon} \cdot \vec{\upsilon}_{closed})$ (kJ / mol)", labelpad=5, fontsize=24)
+def plot_1dfes(bs_path, rxn_coord, fig_path):
+    """Makes a plot against the 1D reaction coordinate.
 
+    Parameters
+    ----------
+    rxn_coord : str
+        Name of the reaction coordinate should match the column name.
+    fig_path : str
+        Path to figure directory for particular fes. 
+
+    Returns
+    -------
+    None.
+
+    """
+    # Initialize the plot
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+
+    # Load table containing discretized free energy surface data.
+    fes = plumed.read_as_pandas(f"{ bs_path }/fes1d_{ rxn_coord }_fulldata.dat")
+    fes = fes.replace([np.inf, -np.inf], np.nan).dropna()
+
+    # Labels for axes for the reaction coordinates
+    rxn_coord_labs = {
+        "open" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$",
+        "closed" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$",
+        }
+
+    # Select reaction coordinate and lable axes accordingly
+    if rxn_coord == "open":
+        ax.scatter(fes["odot"], fes["ffr1d_open"], label="reweighted FES")
+    elif rxn_coord == "closed":
+        ax.scatter(fes["cdot"], fes["ffr1d_closed"], label="reweighted FES")
+    elif rxn_coord == "sb":
+        ax.scatter(fes["sb"], fes["ffr1d_sb"], label="reweighted FES")
+
+    ax.set_xlabel(f"{rxn_coord_labs[rxn_coord]} (nm$^2$)", labelpad=5, 
+                    fontsize=24)
+    ax.set_ylabel(f"$F({rxn_coord_labs[rxn_coord]})$ (kJ / mol)", labelpad=5, 
+                    fontsize=24)
+    
     # Plot settings
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    for i in ["top","bottom","left","right"]:
-        ax.spines[i].set_linewidth(2)
-    ax.grid(True)
     plt.legend(fontsize=18)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
 
-    plt.savefig(f"{ fig_path }/fes_{ conform }.png", dpi=300)
+    # Save figure and close figure object
+    utils.save_figure(fig, f"{ fig_path }/fes_{ rxn_coord }.png")
+    plt.show()
     plt.close()
 
     return None
 
-def get_colvar_data(recalc=False):
-    """Get relevant data for the collective variables and restraint quantities.
+def get_bias_data(home, recalc=False):
+    """Get the 2D array of bias data from all windows.
 
     Parameters
     ----------
     recalc : bool
-        Redetermine the collective variable from plumed files rather than loading
-        arrays from as numpy files.
+        Redetermine the collective variable from plumed files rather 
+        than loading arrays from as numpy files.
 
     Returns
     -------
-    time : np.ndarray
-        The time of the concatenated trajectory in picoseconds.
-    odot : np.ndarray
-        The concatenated trajectory of the open vector dot product, dim = (nframes).
-    cdot : np.ndarray
-        The concatenated trajectory of the closed vector dot product, dim = (nframes).
     bias : np.ndarray
-        The bias applied to the full, concatenated trajectory for each window, 
-        dim = (n-frames, n-windows).
-    fpw : int
-        The number of frames per simulation window.
+        The bias applied to the full, concatenated trajectory for each 
+        window, dim = (n-frames-concat, n-windows).
+    frames : int
+        The number of frames in the full concatenated trajectory.
     """
-    cv_bias_files = [f"{ home }/timeseries.npy", f"{ home }/opendot_concat.npy", 
-                     f"{ home }/closeddot_concat.npy", f"{ home }/bias_concat.npy"]
+    bias_file = f"{ home }/bias_concat.npy"
 
-    if not all(list(map(lambda x : os.path.exists(x), cv_bias_files))) or recalc: 
+    if not os.path.exists(bias_file) or recalc: 
 
-        columns = ["time", "opendot", "closeddot", "theta1", "theta2", "bias", "force"]
-        col = []
+        # Add all the COLVAR data to one large DataFrame 
+        # NB requires a lot of memory!
+        columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
+                   "d4", "d5", "d6", "bias", "force"]
         for i in range(nw):
-            col.append(pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat", delim_whitespace=True, 
-                        comment='#', names=columns))
+            df = pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat",
+                       delim_whitespace=True, comment='#', names=columns)
+            if "bias_arr" not in locals():
+                frames = len(df["bias"]) - 1
+                print("Number of frames", frames)
+                bias = np.zeros((frames, nw))
+            # Reshape the bias array
+            bias[:,i] = df["bias"].iloc[1:]
 
-        fpw = len(col[0]["bias"]) - 1 # frames per window
-        bias = np.zeros((fpw,nw))
-        for i in range(nw):
-            bias[:,i] = col[i]["bias"].iloc[1:] # [-len(bias):] 
-        time = np.array(col[0]["time"].iloc[1:])
-        odot = np.array(col[0]["opendot"].iloc[1:])
-        cdot = np.array(col[0]["closeddot"].iloc[1:])
-
-        for file, arr in zip(cv_bias_files, [time, odot, cdot, bias]):
-            utils.save_array(file, arr)
+        utils.save_array(bias_file, bias)
 
     else:
 
-        time = np.load(cv_bias_files[0], allow_pickle=True)
-        odot = np.load(cv_bias_files[1], allow_pickle=True)
-        cdot = np.load(cv_bias_files[2], allow_pickle=True)
-        bias = np.load(cv_bias_files[3], allow_pickle=True)
-        fpw = len(odot)
+        bias = np.load(bias_file, allow_pickle=True)
+        frames = len(bias[:,0])
 
-    return time, odot, cdot, bias, fpw
+    return bias, frames
 
-def make_ith_histogram(colvar_weights, bs_path, i):
-    """Use plumed HISTOGRAM function to obtain reweighted histograms for the bootstrap.
+def make_ith_histogram(df, bs_path, i):
+    """Use plumed HISTOGRAM function to obtain reweighted histograms for 
+    the bootstrap.
 
     Parameters
     ----------
@@ -495,67 +487,129 @@ def make_ith_histogram(colvar_weights, bs_path, i):
     None.
 
     """
-    plumed.write_pandas(colvar_weights, f"{ bs_path }/colvar_weights_{ i }.dat")
+    plumed.write_pandas(df, f"{ bs_path }/colvar_weights_{ i }.dat")
 
     with open(f"{ bs_path }/colvar_histograms_{ i }.dat","w") as f:
         print(f"""
     # vim:ft=plumed
-    odot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=openvec IGNORE_TIME
-    cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closedvec IGNORE_TIME
+    odot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=opendot IGNORE_TIME
+    cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closeddot IGNORE_TIME
+    theta1: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta1 IGNORE_TIME
+    theta2: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta2 IGNORE_TIME
+    sb: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=saltbridge IGNORE_TIME
+
     lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
 
-    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=150,150 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
+    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=170,170 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
     DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
     ffr: CONVERT_TO_FES GRID=hhr 
     DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
 
+    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=170 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    ffr1d_open: CONVERT_TO_FES GRID=hhr1d_open
+    DUMPGRID GRID=ffr1d_open FILE={ bs_path }/fes1d_open_{ i }.dat
+
+    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=170 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    ffr1d_closed: CONVERT_TO_FES GRID=hhr1d_closed
+    DUMPGRID GRID=ffr1d_closed FILE={ bs_path }/fes1d_closed_{ i }.dat
+
+    hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=1.1 GRID_MAX=2.2 GRID_BIN=30 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
+    DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat
     """, file=f)
 
-    subprocess.run(("plumed driver --noatoms --plumed {}/colvar_histograms_{}.dat --kt {}").format(bs_path, i, kBT), shell=True)
+    subprocess.run((f"plumed driver --noatoms --plumed { bs_path }/colvar" 
+        f"_histograms_{ i }.dat --kt { kBT }"), shell=True)
 
     return None
 
-def get_no_bs_fes(bs_path):
-    """Use all the data to estimate the free energy surface, without bootstrapping.
+def get_no_bs_fes(home, bs_path):
+    """Estimate the free energy surface, without bootstrapping.
 
     Parameters
     ----------
+    home : str
+        Path to the primary data path, containing plumed-driver output.
     bs_path : str
         Path to bootstrapping calculations directory.
 
     Returns
     -------
     fes : pd.DataFrame
-        Pandas table with collective variable data and free energy estimates in kJ/mol.
+        Pandas table with collective variable data and free energy 
+        estimates in kJ/mol.
 
     """
     fes_dat = f"{ bs_path }/fes_catr_fulldata.dat"
 
-    if not os.path.exists(fes_dat):
+    if not os.path.exists(fes_dat) or recalc:
 
-        # # Get the biasing data from COLVAR files
-        time, odot, cdot, bias, fpw = get_colvar_data()
+        # Get the biasing data from COLVAR files
+        bias, frames = get_bias_data(home, recalc=False)
 
-        bb = bias.reshape((nb, fpw // nb, nw))
-        time, odot, cdot = [n.reshape((nb, fpw // nb)) for n in [time, odot, cdot]]
+        # Get collective variable data from any COLVAR file
+        columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
+                   "d4", "d5", "d6", "bias", "force"]
+        df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
+                         comment='#', names=columns)
+        df["saltbridge"] = np.minimum(df["d5"], df["d6"])
 
-        c = np.arange(0,100)
+        # Reshape data for bootstrapping; this actually does nothing here
+        # since the original column order is retained in "c", but the 
+        # bootstrapping step is still performed for consistency
+        bb = bias.reshape((nb, frames // nb, nw))
+        c = np.arange(0, nb)
+        df_reshape = pd.DataFrame()
+        for col in df.columns:
+            df_reshape[col] = bs_cols(df, col, frames, nb , c) 
 
         # Get the log weights for reweighting with WHAM 
         w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
         
-        # Write the logweights to a pandas table for reweighting
-        colvar_weights = pd.DataFrame(data={"time" : time[c,:].flatten(), 
-                            "openvec" : odot[c,:].flatten(), 
-                            "closedvec" : cdot[c,:].flatten(), 
-                            "logweights" : w["logW"]})
-        
-        # Use plumed to make reweighted histograms
-        make_ith_histogram(colvar_weights, bs_path, "fulldata")
+        # Write the logweights to the pandas table for reweighting
+        df_reshape["logweights"] = w["logW"]
 
-    fes = plumed.read_as_pandas(fes_dat).replace([np.inf, -np.inf], np.nan).dropna()
+        # Use plumed to make reweighted histograms
+        make_ith_histogram(df_reshape, bs_path, "fulldata")
+
+    # Load in FES table and remove NaN
+    fes = plumed.read_as_pandas(fes_dat)
+    fes = fes.replace([np.inf, -np.inf], np.nan).dropna()
 
     return fes
+
+def bs_cols(df, col, frames, nb, c):
+    """Reshape column arrays for bootstrapping.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Table of data from a COLVAR file.
+    col : str
+        Column name.
+    frames : int
+        Number of frames in the concatenated traj
+    nb : int
+        Number of bootstraps
+    c : np.array
+        Array for extracting columns for the bootstrap 
+
+    Returns
+    .......
+    bs_flat : np.1darray
+        Data is re-aranged into blocks according to "c" for 
+        bootstrapping.
+
+    """
+    # Get the columns data and reshape into blocks
+    arr = df[col].values
+    arr = arr[1:].reshape((nb, frames // nb))
+
+    # Select blocks and flattent back into a 1d array with the 
+    # original array length
+    bs_flat = arr[c,:].flatten()
+
+    return bs_flat
 
 if __name__ == '__main__':
     main(sys.argv)
