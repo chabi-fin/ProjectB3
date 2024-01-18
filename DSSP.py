@@ -236,10 +236,10 @@ def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w):
 
     # X-axis labels
     if time[-1] > 1e6:
-        frames = dssp.T.shape[1]
+        frames = dssp.T.shape[0]
         xticks = np.arange(0,frames+1,frames/10)
         ax.set_xticks(xticks)
-        ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e6,1)),
+        ax.set_xticklabels(list(map(lambda x : str(np.round(x/1e6,0)),
                                     time[::len(time) // 10])))
         ax.set_xlabel("Time (µs)", labelpad=5, fontsize=28)
     elif umbrella:
@@ -268,6 +268,7 @@ def plot_dssp(dssp, t, subset, salt_bridge, path, umbrella, w):
         utils.save_figure(fig, f"{ path }/dssp_flaps.png")
     else:
         utils.save_figure(fig, f"{ path }/dssp.png")
+    plt.show()
     plt.close()
 
     return None
