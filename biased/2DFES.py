@@ -46,7 +46,8 @@ def main(argv):
                             dest = "nblocks",
                             default = 100,
                             help = ("Number of blocks to use in "
-                                "bootstrap analysis."))            
+                                "bootstrap analysis; 1 ns each by "
+                                "default."))            
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
@@ -71,7 +72,7 @@ def main(argv):
             "arguments.")
         raise
 
-    global nb, cv, nw, kBT, angle_coord, recalc, home
+    global nb, cv, nw, kBT, angle_coord, recalc, home, colvar_columns
 
     # Set key path variables
     home = f"{ config.data_head  }/{ args.path }"
@@ -93,6 +94,8 @@ def main(argv):
                              length_unit="nm")
 
     vec_open, vec_closed = get_ref_vecs(struct_path, core, ref_state)
+    colvar_columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
+                      "d4", "d5", "d6", "bias", "force"]
 
     np_ave_files = [f"{ home }/hist_ave.npy", 
                     f"{ home }/hist_sq_ave.npy", 
@@ -102,7 +105,7 @@ def main(argv):
         os.makedirs(bs_path)
 
     # Make the FES without error estimates 
-    if no_bs:
+    if True:
 
         fes = get_no_bs_fes(home, bs_path)
 
@@ -116,17 +119,20 @@ def main(argv):
     elif not all(list(map(lambda x : os.path.exists(x), np_ave_files))) or recalc: 
 
         # # Get the biasing data from COLVAR files
-        time, odot, cdot, bias, fpw = get_colvar_data()
+        bias, frames = get_bias_data(home, recalc=False)
 
         print(bias)
         print(f"SIZE OF BIAS { np.shape(bias) }")
 
+        # Get collective variable data from any COLVAR file
+        df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
+                         comment='#', names=colvar_columns) 
+
         # Reshape the bias into blocks that can be used for bootstrapping
-        bb = bias.reshape((nw, nb, fpw // nb))
-        time, odot, cdot = [n.reshape((nb, fpw // nb)) for n in [time, odot, cdot]]
+        bb = bias.reshape((nb, frames // nb, nw))
 
         # Initialize arrays for the histogram data
-        ave, ave_sq, count = np.zeros(151**2), np.zeros(151**2), np.zeros(151**2)
+        ave, ave_sq, count = np.zeros(170**2), np.zeros(170**2), np.zeros(170**2)
 
         # # Construct bootstraps and determine reweighted histograms
         for i in range(bs):
@@ -134,6 +140,7 @@ def main(argv):
 
             # Choose random blocks for bootstap
             c=np.random.choice(nb, nb)
+            c = np.arange(0, nb)
 
             pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
             hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
@@ -141,13 +148,13 @@ def main(argv):
             if not os.path.exists(pfes_file) or recalc:
 
                 # Get the log weights for reweighting with WHAM 
-                w = wham.wham(bb[:,c,:].reshape((-1, nw)), T=kBT)
+                w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
 
                 # Write the logweights to a pandas table for reweighting
-                colvar_weights = pd.DataFrame(data={"time" : time[c,:].flatten(), 
-                                    "openvec" : odot[c,:].flatten(), 
-                                    "closedvec" : cdot[c,:].flatten(), 
-                                    "logweights" : w["logW"]})
+                colvar_weights = pd.DataFrame()
+                for col in df.columns:
+                    colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
+                colvar_weights["logweights"] = w["logW"]
 
                 # Use plumed to make reweighted histograms
                 make_ith_histogram(colvar_weights, bs_path, i)
@@ -221,6 +228,8 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path):
 
     x, y = open_bins[mask], closed_bins[mask]
     z = fes[mask]
+    #x, y = open_bins, closed_bins
+    #z = fes
     # z, err = fes[mask], ferr[mask]
 
     d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis)
@@ -293,7 +302,6 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path):
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=24)
-    plt.show()
 
     if angle_coord:
         utils.save_figure(fig, f"{ fig_path }/2dfes_angles.png")
@@ -396,19 +404,23 @@ def plot_1dfes(bs_path, rxn_coord, fig_path):
     rxn_coord_labs = {
         "open" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$",
         "closed" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$",
+        "sb" : "K57--E200"
         }
-
     # Select reaction coordinate and lable axes accordingly
     if rxn_coord == "open":
-        ax.scatter(fes["odot"], fes["ffr1d_open"], label="reweighted FES")
+        ax.plot(fes["odot"], fes["ffr1d_open"], label="reweighted FES")
+        ax.set_xlabel(f"{rxn_coord_labs[rxn_coord]} (nm$^2$)", labelpad=5, 
+                      fontsize=24)
     elif rxn_coord == "closed":
-        ax.scatter(fes["cdot"], fes["ffr1d_closed"], label="reweighted FES")
+        ax.plot(fes["cdot"], fes["ffr1d_closed"], label="reweighted FES")
+        ax.set_xlabel(f"{rxn_coord_labs[rxn_coord]} (nm$^2$)", labelpad=5, 
+                      fontsize=24)
     elif rxn_coord == "sb":
-        ax.scatter(fes["sb"], fes["ffr1d_sb"], label="reweighted FES")
-
-    ax.set_xlabel(f"{rxn_coord_labs[rxn_coord]} (nm$^2$)", labelpad=5, 
+        ax.plot(fes["sb"], fes["ffr1d_sb"], label="reweighted FES")
+        ax.set_xlabel(f"{rxn_coord_labs[rxn_coord]} (nm)", labelpad=5, 
                     fontsize=24)
-    ax.set_ylabel(f"$F({rxn_coord_labs[rxn_coord]})$ (kJ / mol)", labelpad=5, 
+
+    ax.set_ylabel(f"F({rxn_coord_labs[rxn_coord]}) (kJ / mol)", labelpad=5, 
                     fontsize=24)
     
     # Plot settings
@@ -420,7 +432,6 @@ def plot_1dfes(bs_path, rxn_coord, fig_path):
 
     # Save figure and close figure object
     utils.save_figure(fig, f"{ fig_path }/fes_{ rxn_coord }.png")
-    plt.show()
     plt.close()
 
     return None
@@ -448,17 +459,17 @@ def get_bias_data(home, recalc=False):
 
         # Add all the COLVAR data to one large DataFrame 
         # NB requires a lot of memory!
-        columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
-                   "d4", "d5", "d6", "bias", "force"]
         for i in range(nw):
             df = pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat",
-                       delim_whitespace=True, comment='#', names=columns)
-            if "bias_arr" not in locals():
-                frames = len(df["bias"]) - 1
+                       delim_whitespace=True, comment='#')
+            if "bias" not in locals():
+                frames = len(df.iloc[:,-2])
                 print("Number of frames", frames)
                 bias = np.zeros((frames, nw))
             # Reshape the bias array
-            bias[:,i] = df["bias"].iloc[1:]
+            bias[:,i] = df.iloc[:,-2]
+
+        print(f"BIAS ARRAY {bias.shape}\n")
 
         utils.save_array(bias_file, bias)
 
@@ -475,7 +486,7 @@ def make_ith_histogram(df, bs_path, i):
 
     Parameters
     ----------
-    colvar_weights : pd.DataFrame
+    df : pd.DataFrame
         Dataframe containing the collective variables and logweights.
     bs_path : str
         Path to directory for bootstraping data.
@@ -487,6 +498,7 @@ def make_ith_histogram(df, bs_path, i):
     None.
 
     """
+    print(df, df.head())
     plumed.write_pandas(df, f"{ bs_path }/colvar_weights_{ i }.dat")
 
     with open(f"{ bs_path }/colvar_histograms_{ i }.dat","w") as f:
@@ -500,20 +512,20 @@ def make_ith_histogram(df, bs_path, i):
 
     lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
 
-    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=170,170 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
+    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=150,150 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
     DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
     ffr: CONVERT_TO_FES GRID=hhr 
     DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
 
-    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=170 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
     ffr1d_open: CONVERT_TO_FES GRID=hhr1d_open
     DUMPGRID GRID=ffr1d_open FILE={ bs_path }/fes1d_open_{ i }.dat
 
-    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=170 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
     ffr1d_closed: CONVERT_TO_FES GRID=hhr1d_closed
     DUMPGRID GRID=ffr1d_closed FILE={ bs_path }/fes1d_closed_{ i }.dat
 
-    hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=1.1 GRID_MAX=2.2 GRID_BIN=30 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=0 GRID_MAX=2.5 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
     ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
     DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat
     """, file=f)
@@ -548,10 +560,8 @@ def get_no_bs_fes(home, bs_path):
         bias, frames = get_bias_data(home, recalc=False)
 
         # Get collective variable data from any COLVAR file
-        columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
-                   "d4", "d5", "d6", "bias", "force"]
         df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
-                         comment='#', names=columns)
+                         comment='#', names=colvar_columns) 
         df["saltbridge"] = np.minimum(df["d5"], df["d6"])
 
         # Reshape data for bootstrapping; this actually does nothing here
@@ -559,18 +569,20 @@ def get_no_bs_fes(home, bs_path):
         # bootstrapping step is still performed for consistency
         bb = bias.reshape((nb, frames // nb, nw))
         c = np.arange(0, nb)
-        df_reshape = pd.DataFrame()
+        colvar_weights = pd.DataFrame()
         for col in df.columns:
-            df_reshape[col] = bs_cols(df, col, frames, nb , c) 
+            colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
 
         # Get the log weights for reweighting with WHAM 
         w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
+        print("wham shape : ", np.shape(w["logW"]), type(w["logW"]))
+        print(w["logW"])
         
         # Write the logweights to the pandas table for reweighting
-        df_reshape["logweights"] = w["logW"]
+        colvar_weights["logweights"] = w["logW"]
 
         # Use plumed to make reweighted histograms
-        make_ith_histogram(df_reshape, bs_path, "fulldata")
+        make_ith_histogram(colvar_weights, bs_path, "fulldata")
 
     # Load in FES table and remove NaN
     fes = plumed.read_as_pandas(fes_dat)
@@ -602,10 +614,10 @@ def bs_cols(df, col, frames, nb, c):
 
     """
     # Get the columns data and reshape into blocks
-    arr = df[col].values
-    arr = arr[1:].reshape((nb, frames // nb))
+    arr = np.array(df[col].iloc[1:])
+    arr = arr.reshape((nb, frames // nb))
 
-    # Select blocks and flattent back into a 1d array with the 
+    # Select blocks and flatten back into a 1d array with the 
     # original array length
     bs_flat = arr[c,:].flatten()
 
