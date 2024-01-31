@@ -134,8 +134,9 @@ def main(argv):
     #plot_Rgyr(df, fig_path)
     #plot_rmsd(df, "open", fig_path)
     #plot_rmsd(df, "closed", fig_path)
-    for col in df.columns[8:]:
-        plot_ave_dists(df, col, fig_path)
+    # for col in df.columns[8:]:
+    #     plot_ave_dists(df, col, fig_path)
+    plot_windows(df, fig_path)
 
 def get_rgyr(u):
     """Determine the average radius of gyration.
@@ -337,6 +338,25 @@ def plot_ave_dists(df, col, path):
     ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
 
     plt.savefig(f"{ path }/window_ave_{ col }.png", dpi=300)
+    plt.close()
+
+def plot_windows(df, path):
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+
+    window_labs = df.groupby('Window')["Window"].mean().values.astype(int)
+    x = np.array(df[df["Run"] == 1]["OpenPoints"])
+    y = np.array(df[df["Run"] == 1]["ClosedPoints"])
+
+    d = ax.scatter(x,y, marker="o", edgecolors="#404040", s=200, lw=2)
+
+    # Add labels to each point
+    for i, label in enumerate(window_labs):
+        ax.annotate(label, (x[i], y[i]), textcoords="offset points", xytext=(0, 10), ha='center')
+
+    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)")
+    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
+
+    plt.savefig(f"{ path }/window_labels.png", dpi=300)
     plt.close()
 
 if __name__ == '__main__':
