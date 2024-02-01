@@ -36,6 +36,12 @@ def main(argv):
                             help = ("Chose whether the reaction "
                                 "coordinate should be converted into an "
                                 "angle."))
+        parser.add_argument("-s", "--state",
+                            action = "store",
+                            dest = "state",
+                            default = "holo",
+                            help = ("Chose the state for the FES, i.e. "
+                                "apo, holo, mutant"))
         parser.add_argument("-f", "--figpath",
                             action = "store",
                             dest = "fig_path",
@@ -78,7 +84,8 @@ def main(argv):
             "arguments.")
         raise
 
-    global nb, cv, nw, kBT, angle_coord, recalc, home, colvar_columns, no_bs, nbins
+    global nb, cv, nw, kBT, angle_coord, recalc, home, colvar_columns
+    global no_bs, nbins, state, bs
 
     # Set key path variables
     home = f"{ config.data_head  }/{ args.path }"
@@ -91,9 +98,10 @@ def main(argv):
     no_bs = args.no_bootstrap # don't do error analysis
     nb = int(args.nblocks) # number of blocks for bootstrapping
     nw = int(args.num_windows) # number of windows 
-    bs = 100 # number of bootstraps
+    bs = 200 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
     nbins = int(args.nbins)
+    state = args.state
 
     # Helpful objects for structure alignment
     core_res, core = traj_funcs.get_core_res()
@@ -101,15 +109,19 @@ def main(argv):
                              length_unit="nm")
 
     vec_open, vec_closed = get_ref_vecs(struct_path, core, ref_state)
-    colvar_columns = ["time", "opendot", "closeddot", "theta1", "theta2", 
-                      "d4", "d5", "d6", "bias", "force"]
+    if state == "holo":
+        colvar_columns = ["time", "opendot", "closeddot", "theta1", 
+            "theta2", "d4", "d5", "d6", "bias", "force"]
+    elif state == "apo":
+        colvar_columns = ["time", "opendot", "closeddot", "theta1", 
+            "theta2", "bias", "force"]
 
-    np_ave_files = [f"{ home }/hist_ave.npy", 
-                    f"{ home }/hist_sq_ave.npy", 
-                    f"{ home }/bin_counter.npy"]
     bs_path = f"{ home }/bootstrap_files"
     if not os.path.exists(bs_path):
         os.makedirs(bs_path)
+    np_ave_files = [f"{ home }/hist_ave.npy", 
+                    f"{ home }/hist_sq_ave.npy", 
+                    f"{ home }/bin_counter.npy"]
 
     # Make the FES without error estimates 
     if no_bs:
@@ -123,70 +135,11 @@ def main(argv):
         for rxn_coord in ["open", "closed"]:
             plot_1dfes(bs_path, rxn_coord, fig_path)
 
-    # elif not all(list(map(lambda x : os.path.exists(x), 
-    #                             np_ave_files))) or recalc: 
+    elif not all(list(map(lambda x : os.path.exists(x), 
+                                np_ave_files))) or recalc: 
 
-    elif True: 
-
-        # # Get the biasing data from COLVAR files
-        bias, frames = get_bias_data(home, recalc=False)
-
-        print(bias)
-        print(f"SIZE OF BIAS { np.shape(bias) }")
-
-        # Get collective variable data from any COLVAR file
-        df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
-                         comment='#', names=colvar_columns) 
-        df["saltbridge"] = np.minimum(df["d5"], df["d6"])
-
-        # Reshape the bias into blocks that can be used for bootstrapping
-        bb = bias.reshape((nb, frames // nb, nw))
-
-        # Initialize arrays for the histogram data
-        fsum, fsq_sum = np.zeros((nbins + 1)**2), np.zeros((nbins + 1)**2)
-        count = np.zeros((nbins + 1)**2)
-
-        # # Construct bootstraps and determine reweighted histograms
-        for i in range(bs):
-            print(i)
-
-            # Choose random blocks for bootstap
-            c = np.random.choice(nb, nb)
-
-            pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
-            hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
-
-            if not os.path.exists(pfes_file) or recalc:
-
-                # Get the log weights for reweighting with WHAM 
-                w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
-
-                # Write the logweights to a pandas table for reweighting
-                colvar_weights = pd.DataFrame()
-                for col in df.columns:
-                    colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
-                colvar_weights["logweights"] = w["logW"]
-
-                # Use plumed to make reweighted histograms
-                make_ith_histogram(colvar_weights, bs_path, i)
-
-            # Load in free energy estimates determined via plumed
-            pfes = plumed.read_as_pandas(pfes_file
-                    ).replace([np.inf, -np.inf], np.nan)
-
-            # Use the ith histogram to estimate average probability densities
-            mask = ~np.isnan(pfes.ffr) # some bins will be NAN
-            frr = pfes.ffr.replace([np.inf, -np.inf], np.nan)
-            print(frr)
-            fsum = np.nansum([fsum, frr], axis=0) 
-            print(fsum)
-            fsq_sum = np.nansum([fsq_sum, frr*frr], axis=0)
-            # only bins with a bootstrap estimate should have the count 
-            # increased
-            count[mask] += 1 
-
-        for file, arr in zip(np_ave_files, [fsum, fsq_sum, count]):
-            utils.save_array(file, arr)
+        pfes, fsum, fsq_sum, count = get_bs_fes(home, bs_path, 
+                                                np_ave_files)
 
         # Make the 2D FES plot
         plot_2dfes(pfes, vec_open, vec_closed, fig_path, fsum=fsum, 
@@ -218,8 +171,6 @@ def main(argv):
     # fes = - kBT * np.log(ave)
     #error = np.sqrt( var )
     #ferr = error / ave
-
-
 
     # Make the error estimate plot for the 2D FES
 
@@ -498,7 +449,7 @@ def get_bias_data(home, recalc=False):
             df = pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat",
                        delim_whitespace=True, comment='#')
             if "bias" not in locals():
-                frames = len(df.iloc[:,-2])
+                frames = len(df.iloc[:,-2]) / nw
                 print("Number of frames", frames)
                 bias = np.zeros((frames, nw))
             # Reshape the bias array
@@ -511,11 +462,11 @@ def get_bias_data(home, recalc=False):
     else:
 
         bias = np.load(bias_file, allow_pickle=True)
-        frames = len(bias[:,0])
+        frames = len(bias[:,0]) // nw
 
     return bias, frames
 
-def make_ith_histogram(df, bs_path, i):
+def make_ith_histogram(df, bs_path, i, include_sb=False):
     """Use plumed HISTOGRAM function to obtain reweighted histograms for 
     the bootstrap.
 
@@ -527,6 +478,9 @@ def make_ith_histogram(df, bs_path, i):
         Path to directory for bootstraping data.
     i : int
         Integer for the bootstrap.
+    include_sb : bool
+        Whether to include a free energy profile related to the salt 
+        bridge.
 
     Returns
     -------
@@ -537,33 +491,34 @@ def make_ith_histogram(df, bs_path, i):
     plumed.write_pandas(df, f"{ bs_path }/colvar_weights_{ i }.dat")
 
     with open(f"{ bs_path }/colvar_histograms_{ i }.dat","w") as f:
-        print(f"""
-    # vim:ft=plumed
-    odot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=opendot IGNORE_TIME
-    cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closeddot IGNORE_TIME
-    theta1: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta1 IGNORE_TIME
-    theta2: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta2 IGNORE_TIME
-    # sb: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=saltbridge IGNORE_TIME
+        f.write(f"""
+        # vim:ft=plumed
+        odot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=opendot IGNORE_TIME
+        cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closeddot IGNORE_TIME
+        theta1: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta1 IGNORE_TIME
+        theta2: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta2 IGNORE_TIME
 
-    lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
+        lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
 
-    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN={ nbins },{ nbins } BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
-    DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
-    ffr: CONVERT_TO_FES GRID=hhr 
-    DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
+        hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN={ nbins },{ nbins } BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
+        DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
+        ffr: CONVERT_TO_FES GRID=hhr 
+        DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
 
-    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
-    ffr1d_open: CONVERT_TO_FES GRID=hhr1d_open
-    DUMPGRID GRID=ffr1d_open FILE={ bs_path }/fes1d_open_{ i }.dat
+        hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
+        ffr1d_open: CONVERT_TO_FES GRID=hhr1d_open
+        DUMPGRID GRID=ffr1d_open FILE={ bs_path }/fes1d_open_{ i }.dat
 
-    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
-    ffr1d_closed: CONVERT_TO_FES GRID=hhr1d_closed
-    DUMPGRID GRID=ffr1d_closed FILE={ bs_path }/fes1d_closed_{ i }.dat
+        hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
+        ffr1d_closed: CONVERT_TO_FES GRID=hhr1d_closed
+        DUMPGRID GRID=ffr1d_closed FILE={ bs_path }/fes1d_closed_{ i }.dat""")
 
-    #hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=0 GRID_MAX=2.5 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
-    #ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
-    #DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat
-    """, file=f)
+        if include_sb:
+            f.write(f"""
+            sb: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=saltbridge IGNORE_TIME
+            hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=0 GRID_MAX=2.5 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
+            ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
+            DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat""")
 
     subprocess.run((f"plumed driver --noatoms --plumed { bs_path }/colvar" 
         f"_histograms_{ i }.dat --kt { kBT }"), shell=True)
@@ -597,7 +552,8 @@ def get_no_bs_fes(home, bs_path):
         # Get collective variable data from any COLVAR file
         df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
                          comment='#', names=colvar_columns) 
-        df["saltbridge"] = np.minimum(df["d5"], df["d6"])
+        if state == "holo":
+            df["saltbridge"] = np.minimum(df["d5"], df["d6"])
 
         # Reshape data for bootstrapping; this actually does nothing here
         # since the original column order is retained in "c", but the 
@@ -617,13 +573,108 @@ def get_no_bs_fes(home, bs_path):
         colvar_weights["logweights"] = w["logW"]
 
         # Use plumed to make reweighted histograms
-        make_ith_histogram(colvar_weights, bs_path, "fulldata")
+        if state == "holo":
+            make_ith_histogram(colvar_weights, bs_path, "fulldata",
+                include_sb=True)
+        elif state == "apo":
+            make_ith_histogram(colvar_weights, bs_path, "fulldata")
 
     # Load in FES table and remove NaN
     fes = plumed.read_as_pandas(fes_dat)
     fes = fes.replace([np.inf, -np.inf], np.nan).dropna()
 
     return fes
+
+def get_bs_fes(home, bs_path, np_ave_files):
+    """Estimate the free energy surface, with bootstrapping.
+
+    Parameters
+    ----------
+    home : str
+        Path to the primary data path, containing plumed-driver output.
+    bs_path : str
+        Path to bootstrapping calculations directory.
+    np_ave_files : (str) list
+        
+
+    Returns
+    -------
+    pfes : pd.DataFrame
+        Pandas table with collective variable data and free energy 
+        estimates in kJ/mol.
+    fsum : np.ndarray
+        The sum of all bootstrap estimates to the FES for each bin.
+    fsq_sum : np.ndarray
+        The sum of the square of all bootstrap estimates to the FES for 
+        each bin.
+    count : np.ndarray
+        An array for keeping track on the counts for estimates to each
+        histogram bin.
+
+    """
+    # Get the biasing data from COLVAR files
+    bias, frames = get_bias_data(home, recalc=False)
+
+    print(bias)
+    print(f"SIZE OF BIAS { np.shape(bias) }")
+
+    # Get collective variable data from any COLVAR file
+    df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
+                        comment='#', names=colvar_columns) 
+    if state == "holo":
+        df["saltbridge"] = np.minimum(df["d5"], df["d6"])
+
+    # Reshape the bias into blocks that can be used for bootstrapping
+    # bb = bias.reshape((nb, frames // nb, nw))
+    bb = bias.reshape((nw, nb, frames // nb, nw))
+
+    # Initialize arrays for the histogram data
+    fsum, fsq_sum = np.zeros((nbins + 1)**2), np.zeros((nbins + 1)**2)
+    count = np.zeros((nbins + 1)**2)
+
+    # Construct bootstraps and determine reweighted histograms
+    for i in range(bs):
+
+        # Choose random blocks for bootstap
+        c = np.random.choice(nb, nb)
+        print("Random block:", c, "\n")
+
+        pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
+        hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
+
+        if not os.path.exists(pfes_file) or recalc:
+
+            # Get the log weights for reweighting with WHAM 
+            w = wham.wham(bb[:,c,:,:].reshape((-1, nw)), T=kBT)
+
+            # Write the logweights to a pandas table for reweighting
+            colvar_weights = pd.DataFrame()
+            for col in df.columns:
+                colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
+            colvar_weights["logweights"] = w["logW"]
+
+            # Use plumed to make reweighted histograms
+            make_ith_histogram(colvar_weights, bs_path, i)
+
+        # Load in free energy estimates determined via plumed
+        pfes = plumed.read_as_pandas(pfes_file
+                ).replace([np.inf, -np.inf], np.nan)
+
+        # Use the ith histogram to estimate average probability densities
+        mask = ~np.isnan(pfes.ffr) # some bins will be NAN
+        frr = pfes.ffr.replace([np.inf, -np.inf], np.nan)
+        print(frr)
+        fsum = np.nansum([fsum, frr], axis=0) 
+        print(fsum)
+        fsq_sum = np.nansum([fsq_sum, frr*frr], axis=0)
+        # only bins with a bootstrap estimate should have the count 
+        # increased
+        count[mask] += 1 
+
+    for file, arr in zip(np_ave_files, [fsum, fsq_sum, count]):
+        utils.save_array(file, arr)
+
+    return pfes, fsum, fsq_sum, count
 
 def bs_cols(df, col, frames, nb, c):
     """Reshape column arrays for bootstrapping.
@@ -650,11 +701,11 @@ def bs_cols(df, col, frames, nb, c):
     """
     # Get the columns data and reshape into blocks
     arr = np.array(df[col].iloc[1:])
-    arr = arr.reshape((nb, frames // nb))
+    arr = arr.reshape((nw, nb, frames // nb))
 
     # Select blocks and flatten back into a 1d array with the 
     # original array length
-    bs_flat = arr[c,:].flatten()
+    bs_flat = arr[:,c,:].flatten()
 
     return bs_flat
 
