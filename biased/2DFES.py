@@ -16,6 +16,7 @@ sys.path.insert(0, "/home/lf1071fu/project_b3")
 sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 import config.settings as config
 from tools import utils, traj_funcs
+import matplotlib.colors as mcolors
 
 def main(argv):
 
@@ -48,6 +49,11 @@ def main(argv):
                             help = ("Number of blocks to use in "
                                 "bootstrap analysis; 1 ns each by "
                                 "default."))            
+        parser.add_argument("--nbins",
+                            action = "store",
+                            dest = "nbins",
+                            default = 150,
+                            help = ("Number of bins for histograms."))   
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
@@ -55,7 +61,7 @@ def main(argv):
                             help = ("Chose whether the reweighting "
                                 "should be recomputed."))
         parser.add_argument("-n", "--nobootstrap",
-                            action = "store_true",
+                            action = "store_false",
                             dest = "no_bootstrap",
                             default = True,
                             help = ("Compute the free energy surface "
@@ -72,7 +78,7 @@ def main(argv):
             "arguments.")
         raise
 
-    global nb, cv, nw, kBT, angle_coord, recalc, home, colvar_columns
+    global nb, cv, nw, kBT, angle_coord, recalc, home, colvar_columns, no_bs, nbins
 
     # Set key path variables
     home = f"{ config.data_head  }/{ args.path }"
@@ -85,8 +91,9 @@ def main(argv):
     no_bs = args.no_bootstrap # don't do error analysis
     nb = int(args.nblocks) # number of blocks for bootstrapping
     nw = int(args.num_windows) # number of windows 
-    bs = 10 # number of bootstraps
+    bs = 100 # number of bootstraps
     kBT = 310 * 8.314462618 * 0.001 # use kJ/mol here
+    nbins = int(args.nbins)
 
     # Helpful objects for structure alignment
     core_res, core = traj_funcs.get_core_res()
@@ -105,7 +112,7 @@ def main(argv):
         os.makedirs(bs_path)
 
     # Make the FES without error estimates 
-    if True:
+    if no_bs:
 
         fes = get_no_bs_fes(home, bs_path)
 
@@ -113,10 +120,13 @@ def main(argv):
         plot_2dfes(fes, vec_open, vec_closed, fig_path)
         
         # Also make the 1D FES plots
-        for rxn_coord in ["open", "closed", "sb"]:
+        for rxn_coord in ["open", "closed"]:
             plot_1dfes(bs_path, rxn_coord, fig_path)
 
-    elif not all(list(map(lambda x : os.path.exists(x), np_ave_files))) or recalc: 
+    # elif not all(list(map(lambda x : os.path.exists(x), 
+    #                             np_ave_files))) or recalc: 
+
+    elif True: 
 
         # # Get the biasing data from COLVAR files
         bias, frames = get_bias_data(home, recalc=False)
@@ -127,20 +137,21 @@ def main(argv):
         # Get collective variable data from any COLVAR file
         df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
                          comment='#', names=colvar_columns) 
+        df["saltbridge"] = np.minimum(df["d5"], df["d6"])
 
         # Reshape the bias into blocks that can be used for bootstrapping
         bb = bias.reshape((nb, frames // nb, nw))
 
         # Initialize arrays for the histogram data
-        ave, ave_sq, count = np.zeros(170**2), np.zeros(170**2), np.zeros(170**2)
+        fsum, fsq_sum = np.zeros((nbins + 1)**2), np.zeros((nbins + 1)**2)
+        count = np.zeros((nbins + 1)**2)
 
         # # Construct bootstraps and determine reweighted histograms
         for i in range(bs):
             print(i)
 
             # Choose random blocks for bootstap
-            c=np.random.choice(nb, nb)
-            c = np.arange(0, nb)
+            c = np.random.choice(nb, nb)
 
             pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
             hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
@@ -160,52 +171,62 @@ def main(argv):
                 make_ith_histogram(colvar_weights, bs_path, i)
 
             # Load in free energy estimates determined via plumed
-            pfes = plumed.read_as_pandas(pfes_file).replace([np.inf, -np.inf], np.nan)
+            pfes = plumed.read_as_pandas(pfes_file
+                    ).replace([np.inf, -np.inf], np.nan)
 
             # Use the ith histogram to estimate average probability densities
-            # mask = ~np.isnan(pfes.ffr) # some bins will be NAN
-            # ave = np.nansum([ave, pfes.ffr], axis=0) 
-            # ave_sq = np.nansum([ave_sq, pfes.ffr*pfes.ffr], axis=0)
-            # count[mask] += 1 # only bins with a bootstrap estimate should have the count increased
+            mask = ~np.isnan(pfes.ffr) # some bins will be NAN
+            frr = pfes.ffr.replace([np.inf, -np.inf], np.nan)
+            print(frr)
+            fsum = np.nansum([fsum, frr], axis=0) 
+            print(fsum)
+            fsq_sum = np.nansum([fsq_sum, frr*frr], axis=0)
+            # only bins with a bootstrap estimate should have the count 
+            # increased
+            count[mask] += 1 
 
-            ffr = pfes.ffr.astype(float)
-            ave += ffr
-            ave_sq += ffr*ffr
-
-        for file, arr in zip(np_ave_files, [ave, ave_sq, count]):
+        for file, arr in zip(np_ave_files, [fsum, fsq_sum, count]):
             utils.save_array(file, arr)
+
+        # Make the 2D FES plot
+        plot_2dfes(pfes, vec_open, vec_closed, fig_path, fsum=fsum, 
+                   fsq_sum=fsq_sum, count=count)
 
     # Load calculated values from pandas tables and numpy arrays
     else:
 
         # Get bin positions for the CVs
         pfes = plumed.read_as_pandas(f"{ bs_path }/"
-                        "fes_catr_0.dat").replace([np.inf, -np.inf], np.nan) #.dropna()
+                    "fes_catr_0.dat").replace([np.inf, -np.inf], np.nan)
 
         # Load the sum of the free energy esimates from each bin
-        ave = np.load(np_ave_files[0], allow_pickle=True)
-        ave_sq = np.load(np_ave_files[1], allow_pickle=True)
+        fsum = np.load(np_ave_files[0], allow_pickle=True)
+        fsq_sum = np.load(np_ave_files[1], allow_pickle=True)
         count = np.load(np_ave_files[2], allow_pickle=True)
+
+        # Make the 2D FES plot
+        plot_2dfes(pfes, vec_open, vec_closed, fig_path, fsum=fsum, 
+                   fsq_sum=fsq_sum, count=count)
 
     # Calculate free energy surface from histogram averages and 
     # free energy errors from the histograms, see expressions in ex-5 
     # https://www.plumed.org/doc-v2.8/user-doc/html/masterclass-21-2.html
-    # ave = ave / bs
+    #fes = ave / count
     # # fes = convert_fes(hist.odot, hist.cdot, ave)
 
-    # var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
+    #var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
     # fes = - kBT * np.log(ave)
-    # error = np.sqrt( var )
-    # ferr = error / ave
+    #error = np.sqrt( var )
+    #ferr = error / ave
 
-    # Make the 2D FES plot
-    # plot_2dfes(pfes.odot, pfes.cdot, fes, ferr)
+
 
     # Make the error estimate plot for the 2D FES
 
     return None
 
-def plot_2dfes(fes, vec_open, vec_closed, fig_path):
+def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None, 
+        fsq_sum=None, count=None):
     """Plots the 2D FES as a colorbar + contour map.
 
     fes : pd.DataFrame
@@ -216,23 +237,33 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path):
         The reference beta-vector for the closed conformation.
     fig_path : str
         Path for storing the figure. 
+    ave : np.ndarray
+
+    ave_sq : np.ndarray
+
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
 
     # Get the relevant discretized arrays from table columns
     open_bins, closed_bins = fes.odot, fes.cdot 
-    fes, ferr = fes.ffr, None
+    if no_bs:
+        fes = fes.ffr
+    else:
+        fes = np.divide(fsum, count, where=count != 0)
 
-    mask = ((-1e2 < fes) & (fes < 1e2))
+    print(fes.shape)
+
+    mask = ((-1e2 < fes) & (fes < 1e2) & (count != 0))
     # mask = (fes < 1e6)
 
     x, y = open_bins[mask], closed_bins[mask]
-    z = fes[mask]
+    z = fes[mask] - min(fes[mask])
     #x, y = open_bins, closed_bins
     #z = fes
     # z, err = fes[mask], ferr[mask]
 
-    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis)
+    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, 
+            norm=mcolors.Normalize(vmin=0, vmax=100))
 
     # if angle_coord:
     #     fes_r=plumed.read_as_pandas("fes_theta_catr.dat").replace([np.inf, -np.inf], np.nan).dropna()
@@ -257,7 +288,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path):
     contours = ax.tricontour(tri, z, cmap="inferno")
 
     # Colormap settings
-    cbar = plt.colorbar(d)
+    cbar = plt.colorbar(d, ticks=np.arange(0, 101, 20))
     # if angle_coord:
     #     cbar.set_label(r'$F(\theta_{open}, \theta_{closed})$ (kJ / mol)', fontsize=24, labelpad=10)
     # else: 
@@ -303,8 +334,12 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path):
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=24)
 
+    plt.show()
+
     if angle_coord:
         utils.save_figure(fig, f"{ fig_path }/2dfes_angles.png")
+    elif not no_bs:
+        utils.save_figure(fig, f"{ fig_path }/2dfes_bs.png")
     else:
         utils.save_figure(fig, f"{ fig_path }/2dfes.png")
 
@@ -508,26 +543,26 @@ def make_ith_histogram(df, bs_path, i):
     cdot: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=closeddot IGNORE_TIME
     theta1: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta1 IGNORE_TIME
     theta2: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=theta2 IGNORE_TIME
-    sb: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=saltbridge IGNORE_TIME
+    # sb: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=saltbridge IGNORE_TIME
 
     lw: READ FILE={ bs_path }/colvar_weights_{ i }.dat VALUES=logweights IGNORE_TIME
 
-    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN=150,150 BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
+    hhr: HISTOGRAM ARG=odot,cdot GRID_MIN=0,0 GRID_MAX=6,6 GRID_BIN={ nbins },{ nbins } BANDWIDTH=0.05,0.05 LOGWEIGHTS=lw
     DUMPGRID GRID=hhr FILE={ bs_path }/hist_catr_{ i }.dat
     ffr: CONVERT_TO_FES GRID=hhr 
     DUMPGRID GRID=ffr FILE={ bs_path }/fes_catr_{ i }.dat
 
-    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    hhr1d_open: HISTOGRAM ARG=odot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
     ffr1d_open: CONVERT_TO_FES GRID=hhr1d_open
     DUMPGRID GRID=ffr1d_open FILE={ bs_path }/fes1d_open_{ i }.dat
 
-    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    hhr1d_closed: HISTOGRAM ARG=cdot GRID_MIN=0 GRID_MAX=6 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
     ffr1d_closed: CONVERT_TO_FES GRID=hhr1d_closed
     DUMPGRID GRID=ffr1d_closed FILE={ bs_path }/fes1d_closed_{ i }.dat
 
-    hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=0 GRID_MAX=2.5 GRID_BIN=100 BANDWIDTH=0.05 LOGWEIGHTS=lw
-    ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
-    DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat
+    #hhr1d_sb: HISTOGRAM ARG=sb GRID_MIN=0 GRID_MAX=2.5 GRID_BIN=50 BANDWIDTH=0.05 LOGWEIGHTS=lw
+    #ffr1d_sb: CONVERT_TO_FES GRID=hhr1d_sb
+    #DUMPGRID GRID=ffr1d_sb FILE={ bs_path }/fes1d_sb_{ i }.dat
     """, file=f)
 
     subprocess.run((f"plumed driver --noatoms --plumed { bs_path }/colvar" 
