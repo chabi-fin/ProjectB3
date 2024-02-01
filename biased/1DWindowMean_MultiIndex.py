@@ -13,19 +13,18 @@ def main(argv):
     try:
         parser = argparse.ArgumentParser()
 
+        parser.add_argument("-p", "--path",
+                            action = "store",
+                            dest = "path",
+                            default = ("umbrella/holo_state/nobackup"),
+                            help = ("Set relative path to the data "
+                                "directory."))       
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
                             help = ("""Chose whether the trajectory """
                                     """arrays should  be recomputed."""))
-        parser.add_argument("-c", "--coordinate",
-                            action = "store",
-                            dest = "rxn_coord",
-                            default = "beta_vec_open",
-                            help = ("""Select the desired reaction coordinate, """
-                                    """e.g. "beta_vec_open" or "beta_vec_closed"."""))
-
         args = parser.parse_args()
 
     except argparse.ArgumentError:
@@ -35,12 +34,10 @@ def main(argv):
     global path_head, df, rxn_coord
 
     recalc = args.recalc
-    rxn_coord = args.rxn_coord
-    path_head = "/home/lf1071fu/project_b3"
-    home = f"{ path_head }/simulate/umbrella_sampling/{ rxn_coord }/nobackup"
+    home = f"{ config.data_head  }/{ args.path }"
 
     # Get values for the restraint points
-    points = pd.read_csv(f"{ home }/select_initial_struct.csv")
+    points = pd.read_csv(f"{ os.path.dirname(home) }/restraint_pts.csv")
 
     # Initialize DataFrames for trajectory data
     # How to convert these three so they are just one table?# 
@@ -71,7 +68,7 @@ def main(argv):
 
         c = 0
 
-        for window in np.arange(1,21):
+        for window in np.arange(1,31):
 
             beta_vec = np.array([])
             for r in range(4): 
@@ -93,7 +90,7 @@ def main(argv):
 
                 start = (run - 1) * 2501
                 end = run * 2501
-                run_path = f"{ home }/window{ window }/run{ run }"
+                run_path = f"{ home }/window_data/window{ window }/run{ run }"
 
                 # Load in universe objects for the simulation run
                 u = mda.Universe(topol, f"{ run_path }/fitted_traj.xtc", topology_format='ITP')

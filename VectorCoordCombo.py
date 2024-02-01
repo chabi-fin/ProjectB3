@@ -166,7 +166,8 @@ def get_ref_vecs(struct_path, r1, r2):
     
     return ref_state, vec_open, vec_closed
 
-def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state):
+def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state,
+    vec_open, vec_closed, recalc=False):
     """
     """
     if not os.path.exists(df_path) or recalc: 
