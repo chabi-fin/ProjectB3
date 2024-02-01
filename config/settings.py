@@ -14,7 +14,7 @@ struct_head = f"{ path_head }/structures"
 # Shift residue count for consistency with the full-toxin
 toxin_resid = 544 
 beta_flap_group = "backbone and resid 195-218"
-alpha_flap_group = "backbone and resid 219-231"
+alpha_flap_group = "backbone and resid 219-232"
 active_res_group = "resid 110 or resid 155"
 
 # Aesthetics
