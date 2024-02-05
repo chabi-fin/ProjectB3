@@ -145,6 +145,14 @@ def main(argv):
         plot_2dfes(pfes, vec_open, vec_closed, fig_path, fsum=fsum, 
                    fsq_sum=fsq_sum, count=count)
 
+        # Error quantities
+        var = (1 / (count - 1)) * ( fsq_sum / count - fsum * fsum ) 
+        error = np.sqrt( var )
+        ferr = error / (fsum / count)
+
+        # Make the 2D error estimates plot
+        plot_2derror(ferr, pfes, vec_open, vec_closed, fig_path)
+
     # Load calculated values from pandas tables and numpy arrays
     else:
 
@@ -161,13 +169,23 @@ def main(argv):
         plot_2dfes(pfes, vec_open, vec_closed, fig_path, fsum=fsum, 
                    fsq_sum=fsq_sum, count=count)
 
+        # Error quantities
+        count[(count == 0) | (count == 1)] = np.nan
+        ave = fsum / count
+        ave2 = fsq_sum / count
+        var = (count / (count - 1)) * ( ave2 - ave * ave ) 
+        error = np.sqrt( var )
+        ferr = error / (ave)
+
+        # Make the 2D error estimates plot
+        plot_2derror(error, pfes, vec_open, vec_closed, fig_path)
+
     # Calculate free energy surface from histogram averages and 
     # free energy errors from the histograms, see expressions in ex-5 
     # https://www.plumed.org/doc-v2.8/user-doc/html/masterclass-21-2.html
     #fes = ave / count
     # # fes = convert_fes(hist.odot, hist.cdot, ave)
 
-    #var = (1 / (count - 1)) * ( ave_sq / count - ave * ave ) 
     # fes = - kBT * np.log(ave)
     #error = np.sqrt( var )
     #ferr = error / ave
@@ -201,8 +219,6 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         fes = fes.ffr
     else:
         fes = np.divide(fsum, count, where=count != 0)
-
-    print(fes.shape)
 
     mask = ((-1e2 < fes) & (fes < 1e2) & (count != 0))
     # mask = (fes < 1e6)
@@ -243,7 +259,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     # if angle_coord:
     #     cbar.set_label(r'$F(\theta_{open}, \theta_{closed})$ (kJ / mol)', fontsize=24, labelpad=10)
     # else: 
-    cbar.set_label(r'$F(\vec{\upsilon} \cdot \vec{\upsilon}_{open}, \vec{\upsilon} \cdot \vec{\upsilon}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
+    cbar.set_label(r'$F(\vec{\eta} \cdot \vec{\eta}_{open}, \vec{\eta} \cdot \vec{\eta}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
     cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
     ax.clabel(contours, inline=1, fontsize=20)
@@ -277,15 +293,13 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
         ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
     else: 
-        ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\vec{\eta} \cdot \vec{\eta}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_ylabel(r"$\vec{\eta} \cdot \vec{\eta}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=24)
-
-    plt.show()
 
     if angle_coord:
         utils.save_figure(fig, f"{ fig_path }/2dfes_angles.png")
@@ -293,6 +307,64 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         utils.save_figure(fig, f"{ fig_path }/2dfes_bs.png")
     else:
         utils.save_figure(fig, f"{ fig_path }/2dfes.png")
+
+    plt.close()
+
+def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
+    """Makes a plot of the FES error.
+
+    Parameters
+    ----------
+    fes : pd.DataFrame
+        The table containing discretized free energy surface data. 
+    vec_open : float
+        The reference beta-vector for the open conformation.
+    vec_closed : float
+        The reference beta-vector for the closed conformation.
+    fig_path : str
+        Path for storing the figure. 
+    
+    """
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+
+    # Get the relevant discretized arrays from table columns
+    open_bins, closed_bins = fes.odot, fes.cdot 
+
+    mask = ~np.isnan(ferr)
+    x, y = open_bins[mask], closed_bins[mask]
+    z = ferr[mask]
+
+    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, 
+            norm=mcolors.Normalize(vmin=0, vmax=1))
+
+    # Colormap settings
+    cbar = plt.colorbar(d, ticks=np.arange(0, 1.2, 0.2))
+    cbar.set_label(r'$F(\vec{\eta} \cdot \vec{\eta}_{open}, \vec{\eta} \cdot \vec{\eta}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
+    cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
+    cbar.outline.set_linewidth(2)
+
+    ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), 
+                label="Open ref.", marker="X", alpha=1, edgecolors="#404040", 
+                s=550, lw=3, color="#EAAFCC")
+    ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), 
+                label="Closed ref.", marker="X", alpha=1, edgecolors="#404040", 
+                s=550, lw=3, color="#A1DEA1")
+
+    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
+                    length=5, pad=10)
+    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
+                    length=5, pad=10)
+    ax.set_xlabel(r"$\vec{\eta} \cdot \vec{\eta}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
+    ax.set_ylabel(r"$\vec{\eta} \cdot \vec{\eta}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
+    _, xmax = ax.get_xlim()
+    _, ymax = ax.get_ylim()
+    ax.set_xlim(0,xmax)
+    ax.set_ylim(0,ymax)
+    plt.legend(fontsize=24)
+
+    utils.save_figure(fig, f"{ fig_path }/2dfes_error.png")
+
+    plt.show()
 
 def get_ref_vecs(struct_path, core, ref_state):
     """Calculates the beta-vectors for the reference structures.
@@ -388,8 +460,8 @@ def plot_1dfes(bs_path, rxn_coord, fig_path):
 
     # Labels for axes for the reaction coordinates
     rxn_coord_labs = {
-        "open" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$",
-        "closed" : r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$",
+        "open" : r"$\vec{\eta} \cdot \vec{\eta}_{open}$",
+        "closed" : r"$\vec{\eta} \cdot \vec{\eta}_{closed}$",
         "sb" : "K57--E200"
         }
     # Select reaction coordinate and lable axes accordingly
@@ -637,7 +709,6 @@ def get_bs_fes(home, bs_path, np_ave_files):
 
         # Choose random blocks for bootstap
         c = np.random.choice(nb, nb)
-        print("Random block:", c, "\n")
 
         pfes_file = f"{ bs_path }/fes_catr_{ i }.dat"
         hist_file = f"{ bs_path }/hist_catr_{ i }.dat"
@@ -663,9 +734,7 @@ def get_bs_fes(home, bs_path, np_ave_files):
         # Use the ith histogram to estimate average probability densities
         mask = ~np.isnan(pfes.ffr) # some bins will be NAN
         frr = pfes.ffr.replace([np.inf, -np.inf], np.nan)
-        print(frr)
         fsum = np.nansum([fsum, frr], axis=0) 
-        print(fsum)
         fsq_sum = np.nansum([fsq_sum, frr*frr], axis=0)
         # only bins with a bootstrap estimate should have the count 
         # increased
