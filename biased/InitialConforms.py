@@ -59,7 +59,24 @@ def main(argv):
                             dest = "df",
                             default = "restraint_pts.csv",
                             help = ("File name for table of restraint "
-                                "points."))                             
+                                "points."))   
+        parser.add_argument("-a", "--alphafold",
+                            action = "store_true",
+                            dest = "alphafold",
+                            default = False,
+                            help = "Include alpha fold trajectories.")   
+        parser.add_argument("-c", "--cat_trajs",
+                            action = "store",
+                            dest = "cat_traj_path",
+                            default = "dataframe_beta_vec_holo.csv",
+                            help = ("Name of the .csv file with reaction"
+                                " coordinate data."))   
+        parser.add_argument("-i", "--initial_conforms",
+                            action = "store_true",
+                            dest = "initial_conforms",
+                            default = False,
+                            help = ("Use script to find initial conforms"
+                                "for umbrella sampling?"))                       
         args = parser.parse_args()
 
     except argparse.ArgumentError:
@@ -75,70 +92,73 @@ def main(argv):
     topols = [t for t in args.topols.split(" ")]
     xtc = args.xtc
     df_path = f"{ wrkdir }/{ args.df }"
+    cat_traj_path = args.cat_traj_path
+    alphafold = args.alphafold
+    initial_conforms = args.initial_conforms
+
+    holo = True
+    index = (f"{ config.data_head }/unbiased_sims/holo_closed/"
+            "nobackup/index.ndx")
 
     # Check for valid paths
     for p in (data_paths + [fig_path] + [df_path]):
         utils.validate_path(p)
 
-    # Make a list of trajectory paths
-    traj_paths = {}
-    top_paths = {}
-    for p, top in zip(data_paths, topols):
-        print("\n", p, "\n")
-        n = p.split("/")[-2]
-        traj_paths[n] = f"{ p }/{ xtc }"
-        top_paths[n] = f"{ p }/{ top }"
-
-    # Get a table of the restraint points
-    df_pts = pd.read_csv(df_path)
-
     # Alignment and reference structures
+    refs = {"open" : f"{ config.struct_head }/open_ref_state.pdb",
+            "closed" : f"{ config.struct_head }/closed_ref_state.pdb"}
     align = False
     if align:
-        make_align_ref(f"{ wrkdir }/windows_setup2")
-        u_open = mda.Universe(f"{ config.struct_head }/open_ref_state.pdb")
-        u_closed = mda.Universe(f"{ config.struct_head }/closed_ref_state.pdb")
-        traj_funcs.do_alignment(u_open)
-        traj_funcs.do_alignment(u_closed)
-        u_open.select_atoms("all").write(f"{ wrkdir }/open_ref_aligned.pdb")
-        u_closed.select_atoms("all").write(f"{ wrkdir }/closed_ref_aligned.pdb")
+        plumed_align_ref(wrkdir)
+        for ref, ref_path in refs.items():
+            traj_funcs.align_refs(ref, ref_path)
 
-    # Find nearest sample for each window
-    df_cat_path = f"{ config.data_head }/cat_trajs/dataframe_beta_vec_holo.csv"
+    # Get a table of all the sampled reaction coordinates
+    df_cat_path = f"{ config.data_head }/cat_trajs/{ cat_traj_path }"
     df_cat = pd.read_csv(df_cat_path)
 
-    # Determine the nearest sampled conformation for each restraint point
-    restraint_grid = np.array((df_pts.OpenPoints, df_pts.ClosedPoints))
-    ds = []
-    traj_names = [None] * len(df_pts.OpenPoints)
-    traj_frames = [None] * len(df_pts.OpenPoints)
-    for i, g in enumerate(restraint_grid.T):
-        d, d_ind = cv_min_dist(g, (df_cat["dot-open"], df_cat["dot-closed"]))
-        ds.append(d)
-        if d < 0.5:
-            traj_names[i] = df_cat.loc[d_ind, "traj"]
-            traj_frames[i] = df_cat.loc[d_ind, "ts"]
-    df_pts["NearestDist"] = ds
-    df_pts["NearestConformName"] = traj_names
-    df_pts["NearestConformFrame"] = traj_frames
-
-    print(df_pts)
+    # Determine the desired points in the reaction coordinate space
+    df_pts = pd.read_csv(df_path)
     
-    # Plot the restraint points + label points with an available initial conform
-    fig, ax = plt.subplots()
-    ax.scatter(df_pts["OpenPoints"], df_pts["ClosedPoints"], s=100, label="All restraint points")
-    masked_df = df_pts.mask(df_pts["NearestConformName"].notna())
-    ax.scatter(masked_df["OpenPoints"], masked_df["ClosedPoints"], s=50, label="Initial Conform from \nUnbiased Sampling")
-    plt.legend(fontsize=20)
-    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
-    plt.savefig(f"{ wrkdir }/initial_window_points.png", dpi=300)
-    plt.close()
+    # Collect paths for trajectories which may be extracted from
+    traj_paths, top_paths = sim_data_paths(data_paths, topols, xtc, top)
 
-    with open(f"{ wrkdir }/plumed.dat", "r") as f:
+    # Find the closest sampled structure for each point in df_pts
+    df_pts = find_nearest_sample(df_pts, df_cat)
+    print(f"DataFrame of the desired points and the nearby sampled value" \
+        f"\n{ df_pts }")
 
-        plumed_lines = f.readlines() 
+    # Plot the restraint points
+    plot_restraint_positions(df_pts, f"{ wrkdir }/restraint_points.png")
 
+    if initial_conforms:
+        with open(f"{ wrkdir }/plumed.dat", "r") as f:
+            # Get the plumed template 
+            plumed_lines = f.readlines() 
+        extract_window_conforms(df_pts, plumed_lines)
+
+    # Extract the nearby structure for each point in df_pts
+    for i, row in df_pts.iterrows():
+        out_struct = f"{ wrkdir }/conform_{ i }.pdb"
+        extract_conform(row, out_struct)
+
+def extract_window_conforms(df_pts, plumed_lines):
+    """Extracts conforms, prepares plumed files, prepares batch script.
+
+    Parameters
+    ----------
+    df_pts : pd.DataFrame
+        Contains the positions of the desired points in the reaction 
+        coordinate space. 
+    plumed_lines : (str) list
+        Lines from the plumed template file. 
+
+    Returns
+    -------
+    None. 
+
+    """
+    # Keeps a record of new windows ready for sampling
     batch_arr = []
 
     # OpenPoint,ClosedPoint 
@@ -146,46 +166,31 @@ def main(argv):
 
         w = i + 1
 
-        plumed_restraints = []
-        for line in plumed_lines:
-            if "RESTRAINT_OPEN" in line:
-                line = line.replace("RESTRAINT_OPEN", str(row["OpenPoints"]))
-            if "RESTRAINT_CLOSED" in line:
-                line = line.replace("RESTRAINT_CLOSED", str(row["ClosedPoints"]))
-            if "COLVAR_WINDOW" in line:
-                line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
-            plumed_restraints.append(line)
-
-        destination = f"{ config.data_head }/umbrella/holo_state/windows_setup2/window{ w }"
+        # Set up some paths
+        destination = (f"{ config.data_head }/umbrella/holo_state/"
+            f"windows_setup2/window{ w }")
         os.makedirs(destination, exist_ok=True)
         plumed_file = f"{ destination }/plumed_{ w }.dat"
         initial_out = f"{ destination }/initial_conform.pdb"
-        index = f"{ config.data_head }/unbiased_sims/holo_closed/nobackup/index.ndx"
+
+        # Extract the nearby structure for each point in df_pts
+        extract_conform(row, out_struct)
 
         if row["NearestConformName"] is not None:
-            traj = traj_paths[row["NearestConformName"]]
-            top = top_paths[row["NearestConformName"]]
-            time_frame = row["NearestConformFrame"]
-
-            gmx = ["echo", "24", "|", "gmx22", "trjconv", "-f", traj, "-s", top, "-o", initial_out, "-b", str(time_frame - 1000), "-dump", str(time_frame), "-n", index, "-nobackup"]
-            
-            #output = subprocess.Popen(" ".join(gmx), stdout=subprocess.PIPE, shell=True)
-
-            #time.sleep(1)
 
             batch_ids = [4 * (w - 1) + r for r in range(1,5)]
             batch_arr.extend(batch_ids)
 
-        with open(plumed_file, "w") as f:
-            f.writelines(plumed_restraints)
+        plumed_window(row, w, plumed_lines, plumed_file)
 
     # Get the array sbatch script template file
     with open(f"{ wrkdir }/us_array_template.sh", "r") as f:
         sbatch_lines = f.readlines()
 
+    # Modify the template to include the relevant windows array
+    # Recall, 4 runs per window, each with a separate batch array
     batch_arr = list(map(lambda x : str(int(x)), batch_arr))
     batch_str = ",".join(batch_arr)
-    print(batch_str)
     new_batch_lines = []
     for line in sbatch_lines:
         if "--array=test" in line:
@@ -197,6 +202,8 @@ def main(argv):
     with open(f"{ wrkdir }/windows_setup2/us_array_initial.sh", "w") as f:
         f.writelines(new_batch_lines)
 
+    return None
+
 def cv_min_dist(grid_pt, data):
     "How far is the grid point to the nearest data point?"
     d = np.sqrt(np.sum(np.square(np.transpose(data) 
@@ -205,7 +212,7 @@ def cv_min_dist(grid_pt, data):
     min_ind = np.argmin(d)
     return min_d, min_ind 
 
-def make_align_ref(wrkdir):
+def plumed_align_ref(wrkdir):
     """Writes to pdb the subset of atoms for alignment and biasing.
 
     The original atom indicies must be preservered since this is what 
@@ -245,6 +252,196 @@ def make_align_ref(wrkdir):
 
     print(f"Wrote reference alignment structure for plumed to "
           f"{ ref_file }.")
+
+    return None
+
+def sim_data_paths(data_paths, topols, xtc, top, alphafold):
+    """Collects paths related to simulation data. 
+
+    Returns
+    -------
+    traj_paths : dict
+        Dictionary of the paths for trajectory files, assuming 'nobackup'
+        as first level dirname.
+    top_paths : dict
+        Dictionary of the paths for topology files, assuming 'nobackup'
+        as first level dirname.
+    """
+    traj_paths = {}
+    top_paths = {}
+    af_xtc = "fitted_traj_100.xtc"
+    af_top = "topol_protein.top"
+    if alphafold:
+        af_path = f"{ data_head }/unbiased_sims/af_replicas"
+        for i in range(1,10):
+            trajs[f"af {i}"] = f"{ af_path }/af{i}/nobackup/{ af_xtc }"
+            tops[f"af {i}"] = f"{ af_path }/af{i}/nobackup/{ af_top }"
+    for p, top in zip(data_paths, topols):
+        print("\n", p, "\n")
+        n = p.split("/")[-2]
+        traj_paths[n] = f"{ p }/{ xtc }"
+        top_paths[n] = f"{ p }/{ top }"
+    
+    return traj_paths, top_paths
+
+def find_nearest_sample(df_pts, df_cat):
+    """Finds the closest sampled structure for each point in df_pts.
+
+    Parameters
+    ----------
+    df_pts : pd.DataFrame
+        Contains the positions of the desired points in the reaction 
+        coordinate space. 
+    df_cat : pd.DataFrame
+        Contains trajectory data for the reaction coordinates, produced
+        using the VectorCoordCombo.py script. 
+
+    Returns
+    -------
+    df_pts : pd.DataFrame
+        Contains the positions of the desired points in the reaction 
+        coordinate space and the trajectory name and timestep for points
+        with a nearby sample. 
+
+    """
+    # Make an array of the desired points
+    restraint_grid = np.array((df_pts.OpenPoints, df_pts.ClosedPoints))
+
+    # Add columns to the df to record the trajectory and timestep of the
+    # matching conformation
+    traj_names = [None] * len(df_pts.OpenPoints)
+    traj_frames = [None] * len(df_pts.OpenPoints)
+
+    # Determine which sampled conform is closest
+    ds = []
+    for i, g in enumerate(restraint_grid.T):
+        d, d_ind = cv_min_dist(g, (df_cat["dot-open"], df_cat["dot-closed"]))
+        ds.append(d)
+        
+        # Use a minimum distance so no conform is extracted for poor 
+        # sampling in the vicinity
+        if d < 0.5:
+            traj_names[i] = df_cat.loc[d_ind, "traj"]
+            traj_frames[i] = df_cat.loc[d_ind, "ts"]
+
+    # Collect data in the DataFrame
+    df_pts["NearestDist"] = ds
+    df_pts["NearestConformName"] = traj_names
+    df_pts["NearestConformFrame"] = traj_frames
+
+    return df_pts
+
+def plot_restraint_positions(df_pts, fig_path):
+    """Plots and labels the restraint points.
+
+    Parameters
+    ----------
+    df_pts : pd.DataFrame
+        Contains the positions of the desired points in the reaction 
+        coordinate space. 
+    fig_path : str
+        The path and name for the figure. 
+
+    Returns
+    -------
+    None.
+
+    """
+    fig, ax = plt.subplots()
+
+    # Scatter plot for all data, and data subset
+    ax.scatter(df_pts["OpenPoints"], df_pts["ClosedPoints"], s=100, 
+        label="All restraint points")
+    masked_df = df_pts.mask(df_pts["NearestConformName"].notna())
+    ax.scatter(masked_df["OpenPoints"], masked_df["ClosedPoints"], s=50, 
+        label="Conforms available\nfrom sampling")
+
+    # Plot settings
+    plt.legend(fontsize=20)
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
+
+    # Save figure and close
+    utils.save_figure(fig, fig_path)
+    plt.close()
+
+def plumed_window(row, w, plumed_lines, plumed_file):
+    """Writes a plumed.dat file for the window using a template.
+
+    Parameters
+    ----------
+    row : pd.Series
+        The row data for a particular restraint point.
+    w : int
+        The numerical label for the window.
+    plumed_lines : (str) list
+        Lines from the plumed template file. 
+    plumed_file : str
+        The path and file name for the plumed file for the window. 
+
+    Returns
+    -------
+    None. 
+
+    """
+    plumed_restraints = []
+
+    # Substitute variable names into template
+    for line in plumed_lines:
+        if "RESTRAINT_OPEN" in line:
+            line = line.replace("RESTRAINT_OPEN", 
+                str(row["OpenPoints"]))
+        if "RESTRAINT_CLOSED" in line:
+            line = line.replace("RESTRAINT_CLOSED", 
+                str(row["ClosedPoints"]))
+        if "COLVAR_WINDOW" in line:
+            line = line.replace("COLVAR_WINDOW", "COLVAR_" + str(w))
+        plumed_restraints.append(line)
+
+    # Write the plumed file for the specific window
+    with open(plumed_file, "w") as f:
+        f.writelines(plumed_restraints)
+
+    return None
+
+def extract_conform(row, out_struct):
+    """Extracts a conformation for the restraint point with gromacs. 
+
+    Parameters
+    ----------
+    row : pd.Series
+        The row data for a particular restraint point.
+    out_struct : str
+        Path to the extracted structure. 
+
+    Returns
+    -------
+    None. 
+
+    """
+    if row["NearestConformName"] is not None:
+        traj = traj_paths[row["NearestConformName"]]
+        top = top_paths[row["NearestConformName"]]
+        time_frame = row["NearestConformFrame"]
+
+        if holo:
+            ind_code = "24"
+        else:
+            ind_code = "1"
+
+        gmx = ["echo", ind_code, "|", "gmx22", "trjconv", "-f", traj, 
+            "-s", top, "-o", out_struct, "-b", str(time_frame - 1000), 
+            "-dump", str(time_frame), "-nobackup"]
+
+        if holo:
+            gmx.extend(["-n", index])
+        
+        # Uses a subprocess to run gromacs
+        output = subprocess.Popen(" ".join(gmx), 
+                                    stdout=subprocess.PIPE, 
+                                    shell=True)
+
+        time.sleep(1)
 
     return None
 
