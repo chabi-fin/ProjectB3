@@ -30,12 +30,18 @@ def main(argv):
                             default = ("umbrella/holo_state"),
                             help = ("Set a relative path destination for"
                                 " the figure."))
+        parser.add_argument("-s", "--state",
+                            action = "store",
+                            dest = "state",
+                            default = "holo",
+                            help = ("Select state as 'apo', 'holo' or "
+                                "'mutant'."))
         parser.add_argument("-r", "--recalc",
                             action = "store_true",
                             dest = "recalc",
                             default = False,
-                            help = """Chose whether the trajectory arrays should  be recomputed.""")
-
+                            help = ("Chose whether the trajectory arrays"
+                                " should  be recomputed."))
         args = parser.parse_args()
 
     except argparse.ArgumentError:
@@ -45,12 +51,12 @@ def main(argv):
     global path_head
 
     recalc = args.recalc
-    home = f"{ config.data_head  }/{ args.path }"
+    home = f"{ config.data_head }/{ args.path }"
     fig_path = f"{ config.figure_head }/{ args.fig_path }"
+    state = args.state
 
     # Get values for the restraint points
-    points = pd.read_csv(f"{ config.data_head }/umbrella/holo_state/restraint_pts.csv")
-    points = pd.read_csv(f"{ config.data_head }/lyn_sims/umbrella_sampling/2d_fes/nobackup/dataframe_restraints.csv")
+    points = pd.read_csv(f"{ home }/restraint_pts.csv")
 
     if recalc or not os.path.exists(f"{ home }/averages.csv"): 
 
@@ -67,10 +73,11 @@ def main(argv):
                 "K249--S230a", "K249--S230b", "K249--S230c", "S230--I226",
                 "K249--E233", "R209--S231", "R209--N197", "R209--E253",
                 "R202--E210", "K221--E223", "R208--E222", "K57--G207",
-                "K57--V201", "R28--S205"] #, "K221--IP6", "R208--IP6",
-                #"R28--IP6", "R32--IP6", "Y34--IP6", "K249--IP6",
-                #"R209--IP6", "K104--IP6", "K57--IP6", "K232--IP6",
-                #"Y234--IP6"]
+                "K57--V201", "R28--S205"]
+        if state == "holo":
+            cols.extend(["K221--IP6", "R208--IP6", "R28--IP6", 
+                "R32--IP6", "Y34--IP6", "K249--IP6", "R209--IP6", 
+                "K104--IP6", "K57--IP6", "K232--IP6", "Y234--IP6"])
         for col in cols:
             df[col] = 0
 
@@ -83,8 +90,9 @@ def main(argv):
         topol = f"{ home }/topol_protein.top"
 
         c = 0
+        nw = {"apo" : 181, "holo" : 170, "mutant" : 0}
 
-        for window in np.arange(1,181):
+        for window in np.arange(1,nw[state]):
             for run in [1,2,3,4]:
                 
                 run_path = f"{ home }/window{ window }/run{ run }"
@@ -134,8 +142,8 @@ def main(argv):
     #plot_Rgyr(df, fig_path)
     #plot_rmsd(df, "open", fig_path)
     #plot_rmsd(df, "closed", fig_path)
-    # for col in df.columns[8:]:
-    #     plot_ave_dists(df, col, fig_path)
+    for col in df.columns[8:]:
+        plot_ave_dists(df, col, fig_path)
     plot_windows(df, fig_path)
 
 def get_rgyr(u):
@@ -293,8 +301,8 @@ def plot_Rgyr(df, path):
     cbar = plt.colorbar(d)
     cbar.set_label(r'Radius of Gyration ($\AA$)', fontsize=32, labelpad=10)
 
-    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)")
-    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)")
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)")
 
     plt.savefig(f"{ path }/window_Rgyr.png", dpi=300)
     plt.close()
@@ -312,8 +320,8 @@ def plot_rmsd(df, ref_state, path):
     cbar = plt.colorbar(d)
     cbar.set_label(f'RMSD$_{ ref_state }$ ($\AA$)', fontsize=32, labelpad=10)
 
-    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)")
-    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)")
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)")
 
     plt.savefig(f"{ path }/window_RMSD_{ ref_state }.png", dpi=300)
     plt.close()
@@ -334,8 +342,8 @@ def plot_ave_dists(df, col, path):
     cbar.set_label(f"Distance { col } " + r"($\AA$)", fontsize=32, 
         labelpad=10)
 
-    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)")
-    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)")
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)")
 
     plt.savefig(f"{ path }/window_ave_{ col }.png", dpi=300)
     plt.close()
@@ -353,8 +361,8 @@ def plot_windows(df, path):
     for i, label in enumerate(window_labs):
         ax.annotate(label, (x[i], y[i]), textcoords="offset points", xytext=(0, 10), ha='center')
 
-    ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)")
-    ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)")
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)")
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)")
 
     plt.savefig(f"{ path }/window_labels.png", dpi=300)
     plt.close()
