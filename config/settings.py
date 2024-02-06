@@ -17,6 +17,9 @@ beta_flap_group = "backbone and resid 195-218"
 alpha_flap_group = "backbone and resid 219-232"
 active_res_group = "resid 110 or resid 155"
 
+# Alpha carbons for the beta-flap vector 
+r1, r2 = 206, 215
+
 # Aesthetics
 open_color = "#A1DEA1"
 closed_color = "#EAAFCC"
