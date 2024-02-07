@@ -121,7 +121,8 @@ def main(argv):
     df_pts = pd.read_csv(df_path)
     
     # Collect paths for trajectories which may be extracted from
-    traj_paths, top_paths = sim_data_paths(data_paths, topols, xtc, top)
+    traj_paths, top_paths = sim_data_paths(data_paths, topols, xtc, 
+                                           alphafold=alphafold)
 
     # Find the closest sampled structure for each point in df_pts
     df_pts = find_nearest_sample(df_pts, df_cat)
@@ -205,11 +206,32 @@ def extract_window_conforms(df_pts, plumed_lines):
     return None
 
 def cv_min_dist(grid_pt, data):
-    "How far is the grid point to the nearest data point?"
+    """How far is the grid point to the nearest sampled point?
+
+    Finds the minimum distance and and the index of the sampled point 
+    closest to the grid point.
+    
+    Parameters
+    ----------
+    grid_pt : np.ndarray
+        The 2D grid point.
+    data : np.ndarray
+        The 2D array of sampled points.
+
+    Returns
+    -------
+    min_d : float
+        The distance of the closest point, which helps determine whether
+        the sample is sufficiently close.
+    min_ind : int
+        The index of the relevant sample. 
+
+    """
     d = np.sqrt(np.sum(np.square(np.transpose(data) 
                                  - np.array(grid_pt)), axis=1))
     min_d = np.min(d)
     min_ind = np.argmin(d)
+
     return min_d, min_ind 
 
 def plumed_align_ref(wrkdir):
@@ -255,8 +277,20 @@ def plumed_align_ref(wrkdir):
 
     return None
 
-def sim_data_paths(data_paths, topols, xtc, top, alphafold):
+def sim_data_paths(data_paths, topols, xtc, alphafold):
     """Collects paths related to simulation data. 
+
+    Parameters
+    ----------
+    data_paths : (str) list
+        A list of paths to simulation data.
+    topols : (str) list
+        A list of names of topol files.
+    xtc : str
+        Name for all the xtc files.
+    alphafold : bool
+        If true, will include alphafold simulation data when searching 
+        for suitable conformations.
 
     Returns
     -------
