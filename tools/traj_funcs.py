@@ -150,6 +150,29 @@ def do_alignment(u):
         print(f"Error: An unexpected error occurred - { e } .")
 
     ref_struct = mda.Universe(ref_path)
-    u = align.AlignTraj(u, ref_struct, select=core, in_memory=True).run()
+    align.AlignTraj(u, ref_struct, select=core, in_memory=True).run()
 
     return u
+
+def align_refs(ref, ref_path):
+    """Writes out an aligned pdb of a structure.
+
+    Parameters
+    ----------
+    ref : str
+        Descriptive name used for naming the pdb file.
+    ref_path : str
+        Path for the structure which will be aligned. The new structure
+        will be written out in the same directory. 
+    
+    Returns
+    -------
+    None. 
+    
+    """
+    srtuct = mda.Universe(ref_path)
+    traj_funcs.do_alignment(struct)
+    struct.select_atoms("all").write(
+        f"{ os.path.dirname(ref_path) }/{ ref }_ref_aligned.pdb")
+
+    return None
