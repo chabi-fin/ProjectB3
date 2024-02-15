@@ -211,7 +211,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     ave_sq : np.ndarray
 
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(10,8))
 
     # Get the relevant discretized arrays from table columns
     open_bins, closed_bins = fes.odot, fes.cdot 
@@ -221,6 +221,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         fes = np.divide(fsum, count, where=count != 0)
 
     mask = ((-1e2 < fes) & (fes < 1e2) & (count != 0))
+    mask[0] = 0
     # mask = (fes < 1e6)
 
     x, y = open_bins[mask], closed_bins[mask]
@@ -259,16 +260,10 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     # if angle_coord:
     #     cbar.set_label(r'$F(\theta_{open}, \theta_{closed})$ (kJ / mol)', fontsize=24, labelpad=10)
     # else: 
-    cbar.set_label(r'$F(\vec{\eta} \cdot \vec{\eta}_{open}, \vec{\eta} \cdot \vec{\eta}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
+    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=28, labelpad=10)
     cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
     ax.clabel(contours, inline=1, fontsize=20)
-
-    # Find minima
-    # minima_indices, _ = find_peaks(-np.array(z), prominence=70)
-    # mins = np.array(minima_indices)
-    # xmins = [x[i] for i in mins]
-    # ymins = [y[i] for i in mins]
 
     # Add both reference positions
     if angle_coord:
@@ -285,6 +280,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
                 label="Closed ref.", marker="X", alpha=1, edgecolors="#404040", 
                 s=550, lw=3, color="#A1DEA1")
 
+    # Plot parameters and axis labels
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
@@ -293,20 +289,22 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
         ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
     else: 
-        ax.set_xlabel(r"$\vec{\eta} \cdot \vec{\eta}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\vec{\eta} \cdot \vec{\eta}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
+    ax.set_aspect('equal', adjustable='box')
     plt.legend(fontsize=24)
 
     if angle_coord:
-        utils.save_figure(fig, f"{ fig_path }/2dfes_angles.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_angles_ { state }.png")
     elif not no_bs:
-        utils.save_figure(fig, f"{ fig_path }/2dfes_bs.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_bs_ { state }.png")
     else:
-        utils.save_figure(fig, f"{ fig_path }/2dfes.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_ { state }.png")
+    plt.show()
 
     plt.close()
 
@@ -325,12 +323,13 @@ def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
         Path for storing the figure. 
     
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(10,8))
 
     # Get the relevant discretized arrays from table columns
     open_bins, closed_bins = fes.odot, fes.cdot 
 
     mask = ~np.isnan(ferr)
+    mask[0] = 0
     x, y = open_bins[mask], closed_bins[mask]
     z = ferr[mask]
 
@@ -339,7 +338,7 @@ def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
 
     # Colormap settings
     cbar = plt.colorbar(d, ticks=np.arange(0, 1.2, 0.2))
-    cbar.set_label(r'$F(\vec{\eta} \cdot \vec{\eta}_{open}, \vec{\eta} \cdot \vec{\eta}_{closed})$ (kJ / mol)', fontsize=28, labelpad=10)
+    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=28, labelpad=10)
     cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
 
@@ -350,21 +349,19 @@ def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
                 label="Closed ref.", marker="X", alpha=1, edgecolors="#404040", 
                 s=550, lw=3, color="#A1DEA1")
 
+    # Plot parameters and axis labels
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
     ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
                     length=5, pad=10)
-    ax.set_xlabel(r"$\vec{\eta} \cdot \vec{\eta}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-    ax.set_ylabel(r"$\vec{\eta} \cdot \vec{\eta}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
-    _, xmax = ax.get_xlim()
-    _, ymax = ax.get_ylim()
-    ax.set_xlim(0,xmax)
-    ax.set_ylim(0,ymax)
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
+    ax.set_xlim(0,6)
+    ax.set_ylim(0,6)
+    ax.set_aspect('equal', adjustable='box')
     plt.legend(fontsize=24)
 
-    utils.save_figure(fig, f"{ fig_path }/2dfes_error.png")
-
-    plt.show()
+    utils.save_figure(fig, f"{ fig_path }/2dfes_error_{ state }.png")
 
 def get_ref_vecs(struct_path, core, ref_state):
     """Calculates the beta-vectors for the reference structures.
@@ -460,10 +457,11 @@ def plot_1dfes(bs_path, rxn_coord, fig_path):
 
     # Labels for axes for the reaction coordinates
     rxn_coord_labs = {
-        "open" : r"$\vec{\eta} \cdot \vec{\eta}_{open}$",
-        "closed" : r"$\vec{\eta} \cdot \vec{\eta}_{closed}$",
+        "open" : r"$\xi_1$",
+        "closed" : r"$\xi_2$",
         "sb" : "K57--E200"
         }
+        
     # Select reaction coordinate and lable axes accordingly
     if rxn_coord == "open":
         ax.plot(fes["odot"], fes["ffr1d_open"], label="reweighted FES")
