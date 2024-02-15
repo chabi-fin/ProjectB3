@@ -5,7 +5,9 @@ import argparse
 import matplotlib.pyplot as plt
 import MDAnalysis as mda
 from MDAnalysis.analysis import align
+from MDAnalysis.analysis.distances import distance_array
 import pandas as pd
+sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 from tools import utils, traj_funcs
 import config.settings as c
 from tools import utils, traj_funcs
@@ -46,12 +48,19 @@ def main(argv):
                             dest = "state",
                             default = "apo",
                             help = "Select a system state, i.e. 'holo',"
-                                   " 'apo', 'mutants'.")
+                                   " 'apo', 'mutants' used for naming "
+                                   "figures and dataframes.")
         parser.add_argument("-a", "--alphafold",
                             action = "store_true",
                             dest = "alphafold",
                             default = False,
-                            help = "Include alpha fold trajectories.")    
+                            help = "Include alpha fold trajectories.")
+        parser.add_argument("-x", "--xtc",
+                            action = "store",
+                            dest = "xtc",
+                            default = "fitted_traj_100.xtc",
+                            help = """File name for trajectory, inside 
+                                the path directory.""")    
         parser.add_argument("-p", "--path",
                             action = "store",
                             dest = "paths",
@@ -77,13 +86,14 @@ def main(argv):
     restrain = args.restrain
     conform = args.conform
     state = args.state
+    xtc = args.xtc
     alphafold = args.alphafold
     data_paths = [f"{ c.data_head }/{ p }" for p in args.paths]
 
     fig_path = f"{ c.figure_head }/unbiased_sims/rxn_coord"
     struct_path = c.struct_head
-    beta_vec_path = ("/home/lf1071fu/project_b3/simulate/lyn_sims/"
-                     "umbrella_sampling/beta_vec_open")
+    beta_vec_path = ("/home/lf1071fu/project_b3/simulate/"
+                     "umbrella/holo_state")
     data_head = c.data_head
     sim_paths = {
         "apo-open" : f"{ data_head }/unbiased_sims/apo_open/nobackup",
@@ -92,13 +102,11 @@ def main(argv):
         "holo-closed" : f"{ data_head }/unbiased_sims/holo_closed/nobackup"}
 
     # Get the reference beta vectors
-    r1, r2 = 206, 215
-    ref_state, vec_open, vec_closed = get_ref_vecs(struct_path, r1, r2)
+    ref_state, vec_open, vec_closed = get_ref_vecs(struct_path)
 
     # Make a list of trajectory paths
     trajs = {}
     tops = {}
-    xtc = "fitted_traj_100.xtc"
     top = "topol_protein.top"
     if alphafold:
         af_path = f"{ data_head }/unbiased_sims/af_replicas"
@@ -107,7 +115,7 @@ def main(argv):
             tops[f"af {i}"] = f"{ af_path }/af{i}/nobackup/{ top }"
     for p in data_paths:
         print("\n", p, "\n")
-        n = p.split("/")[-1]
+        n = p.split("/")[-2]
         # Check if topology file exists
         utils.process_topol(p, top)
         trajs[n] = f"{ p }/{ xtc }"
@@ -115,7 +123,8 @@ def main(argv):
 
     # Get the beta-vector data as a DataFrame
     df_path = f"{ data_head }/cat_trajs/dataframe_beta_vec_{ state }.csv"
-    df = get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state)
+    df = get_vec_dataframe(trajs, tops, df_path, ref_state, vec_open,
+                           vec_closed, recalc=recalc)
 
     # Gets restraint points as needed
     if restrain:
@@ -129,7 +138,7 @@ def main(argv):
     elif plot_coord:
         plot_rxn_coord(df, fig_path, angles_coord=False)
 
-def get_ref_vecs(struct_path, r1, r2):
+def get_ref_vecs(struct_path):
     """
     """
     # Load in relevant reference structures
@@ -150,25 +159,53 @@ def get_ref_vecs(struct_path, r1, r2):
     # Determine open + closed reference beta flap vectors in units of 
     # Angstrom
     r1_open = open_ref.select_atoms(
-                                    f"name CA and resnum { r1 }"
+                                    f"name CA and resnum { c.r1 }"
                                     ).positions[0]
     r2_open = open_ref.select_atoms(
-                                    f"name CA and resnum { r2 }"
+                                    f"name CA and resnum { c.r2 }"
                                     ).positions[0]
     vec_open = r2_open/10 - r1_open/10
     r1_closed = closed_ref.select_atoms(
-                                        f"name CA and resnum { r1 }"
+                                        f"name CA and resnum { c.r1 }"
                                         ).positions[0]
     r2_closed = closed_ref.select_atoms(
-                                        f"name CA and resnum { r2 }"
+                                        f"name CA and resnum { c.r2 }"
                                         ).positions[0]
     vec_closed = r2_closed/10 - r1_closed/10
     
     return ref_state, vec_open, vec_closed
 
-def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state,
+def get_vec_dataframe(trajs, tops, df_path, ref_state,
     vec_open, vec_closed, recalc=False):
-    """
+    """Get the beta-vec rxn coord as a DataFrame.
+
+    The DataFrame includes the beta-vec reaction coord as well as the 
+    angle coord, the trajectory label, and the time step. By default, one
+    entry every ns. 
+
+    Parameters
+    ----------
+    trajs : (str : str) dict
+        The lable and path for the xtc file of each traj.
+    tops : (str : str) dict
+        The label and path for the top file of each traj.
+    df_path : str
+        The path for storing the DataFrame as a csv.
+    ref_state : mda.Universe
+        The reference state used for alignment.
+    vec_open : np.ndarray
+        The reference open beta vector.
+    vec_closed : np.ndarray
+        The reference closed beta vector.
+    recalc : bool
+        Redetermines the DataFrame from trajectory data if true.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        The DataFrame containing data for the beta-vec reaction coord. 
+        See "columns".
+
     """
     if not os.path.exists(df_path) or recalc: 
 
@@ -188,32 +225,31 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state,
             align.AlignTraj(u, ref_state, select=core, 
                             in_memory=True).run()
 
-            dot_open = np.zeros(u.trajectory.n_frames)
-            dot_closed = np.zeros(u.trajectory.n_frames)
-
             # Iterate over traj
             for ts in u.trajectory:
 
                 # Determine the vector between two alpha carbons in nm
                 atom1 = u.select_atoms(
-                                       f"name CA and resnum { r1 }"
+                                       f"name CA and resnum { c.r1 }"
                                        ).positions[0]
                 atom2 = u.select_atoms(
-                                       f"name CA and resnum { r2 }"
+                                       f"name CA and resnum { c.r2 }"
                                        ).positions[0]
                 vec = atom2/10 - atom1/10
 
-                # Calculate and store the dot product against each 
-                # reference
-                dot_open[ts.frame] = np.dot(vec, vec_open)
-                dot_closed[ts.frame] = np.dot(vec, vec_closed)
+                # Determine for the salt-bridge
+                sel_basic = u.select_atoms("resid 200 and name OE*")
+                sel_acidic = u.select_atoms("resid 57 and name NZ*")
+                salt_arr = distance_array(sel_basic.positions, 
+                                    sel_acidic.positions)
 
                 # Check that each timestep in traj is separated by 1 ns
                 instance = {"traj" : [name], "ts" : [ts.frame * 1000], 
                             "dot-open" : [np.dot(vec, vec_open)], 
                             "dot-closed" : [np.dot(vec, vec_closed)],
                             "angle-open" : [calc_theta(vec_open, vec)], 
-                            "angle-closed" : [calc_theta(vec_closed, vec)]}
+                            "angle-closed" : [calc_theta(vec_closed, vec)],
+                            "salt-bridge" : np.min(salt_arr)}
 
                 # Append the new row to the DataFrame
                 df_new = pd.DataFrame.from_dict(instance, 
@@ -221,7 +257,7 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state,
 
                 df = pd.concat([df, df_new])
 
-        utils.save_df(df, df_path) #index=False
+        utils.save_df(df, df_path)
 
     else: 
 
@@ -231,13 +267,30 @@ def get_vec_dataframe(trajs, tops, df_path, r1, r2, ref_state,
 
 def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
     ):
+    """Makes a plot of the reaction coord.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The DataFrame containing data for the beta-vec reaction coord. 
+        See "columns".
+    fig_path : str
+        The path to save the reaction coord figure. 
+    angles_coord : bool
+        Plots the reaction coord as an angle if true.
+
+    Returns
+    -------
+    None. 
+    
+    """
     # Plot the two products over the traj
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(8,8))
 
     def get_color(traj):
         "Makes a formatted lable for plotting."
         colors = {"af 1" : "#ff5500", "af 2" : "#ffcc00", "af 3" : "#d9ff00", 
-            "af 4" : "#91ff00", "af 5" : "#2bff00", "af 6" : "#00ffa2",
+            "af 4" : "#91ff00", "af 5" : "#00ffa2", "af 6" : "#2bff00",
             "af 7" : "#00ffe1", "af 8" : "#00e5ff", "af 9" : "#0091ff",
             "K57G" : "#ebba34", "double_mut" : "#36b3cf", "E200G" : "#8442f5"}#
 
@@ -256,7 +309,9 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
         labels = {"apo_open" : "apo open", "apo_closed" : "apo closed", 
                   "holo_open" : "holo open", "holo_closed" : "holo closed",
                   "K57G" : "K57G", "double_mut" : "K57G + E200G", 
-                  "E200G" : "E200G"}
+                  "E200G" : "E200G", "af 1" : "af 1", "af 2" : "af 2",
+                  "af 3" : "af 3", "af 4" : "af 4", "af 6" : "af 5",
+                  "af 7" : "af 6", "af 8" : "af 7", "af 9" : "af 8"}
         
         if traj in labels.keys():
             return labels[traj]
@@ -276,32 +331,37 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
         if angles_coord:
 
             ax.scatter(traj_df["angle-open"], traj_df["angle-closed"], 
-                        label=get_label(t), alpha=1, marker="o", s=150)
-                        # color=get_color(t), s=150)       
+                        label=get_label(t), alpha=1, marker="o", 
+                        color=get_color(t), s=150)       
 
         else:
 
-            ax.scatter(traj_df["dot-open"], traj_df["dot-closed"], label=get_label(t), 
-                        alpha=1, marker="o", s=150)
-                        #color=get_color(t))
+            ax.scatter(traj_df["dot-open"], traj_df["dot-closed"], 
+                        label=get_label(t), alpha=1, marker="o", s=150, 
+                        color=get_color(t))
 
     # Add in reference positions
     if angles_coord: 
-        ax.scatter(calc_theta(vec_open, vec_open), calc_theta(vec_open, vec_closed), label="Open ref.", 
-                marker="X", color="#EAAFCC", edgecolors="#404040", s=550,lw=3)
-        ax.scatter(calc_theta(vec_open, vec_closed), 0, label="Closed ref.", 
-                marker="X", color="#A1DEA1", edgecolors="#404040", s=550, lw=3)
+        ax.scatter(calc_theta(vec_open, vec_open), 
+                   calc_theta(vec_open, vec_closed), label="Closed ref.", 
+                   marker="X", color=c.closed_color, edgecolors="#404040", 
+                   s=550,lw=3)
+        ax.scatter(calc_theta(vec_open, vec_closed), 0, label="Open ref.", 
+                marker="X", color=c.open_color, edgecolors="#404040", s=550, lw=3)
 
     else: 
-        ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), label="Open ref.", 
-                    marker="X", color="#EAAFCC", edgecolors="#404040", s=550,lw=3)
-        ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), label="Closed ref.", 
-                    marker="X", color="#A1DEA1", edgecolors="#404040", s=550, lw=3)
+        ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), 
+                   label="Open ref.", marker="X", color=c.closed_color, 
+                   edgecolors="#404040", s=550, lw=3)
+        ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), 
+                   label="Closed ref.", marker="X", color=c.open_color, 
+                   edgecolors="#404040", s=550, lw=3)
 
         # Add restraint points
         if restrain:
             ax.scatter(restraints[:,0], restraints[:,1], label="Restrain at", 
-                    marker="o", color="#949494", edgecolors="#EAEAEA", lw=3, s=150)
+                    marker="o", color="#949494", edgecolors="#EAEAEA", lw=3, 
+                    s=150)
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -315,9 +375,11 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
         ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
         ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
     else:
-        ax.set_xlabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{open}$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\vec{\upsilon} \cdot \vec{\upsilon}_{closed}$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
     plt.legend(fontsize=18, ncol=2)
+    ax.set_xlim(0,6)
+    ax.set_ylim(0,6)
 
     if restrain:
         utils.save_figure(fig, f"{ fig_path }/beta_vec_{ conform }_{ state }_pts.png")
@@ -325,6 +387,7 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
         utils.save_figure(fig, f"{ fig_path }/beta_vec_angle_{ state }.png")
     else:
         utils.save_figure(fig, f"{ fig_path }/beta_vec_{ state }.png")
+
     plt.show()
     plt.close()
 
