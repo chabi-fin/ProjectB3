@@ -158,7 +158,6 @@ def main(argv):
 
         # Determine RMSF by first finding and aligning to the average 
         # structure
-        print(np_files)
         arrs["calphas"], arrs["rmsf"] = get_rmsf(u, 
                                             f"{ data_path }/topol_protein.top",
                                             core_res)
@@ -168,18 +167,18 @@ def main(argv):
         arrs["r_gyr"], arrs["time_ser"] = get_rgyr(u)
 
         # # Phi and Psi backbone dihedrals
-        resids = u.residues[195:232]
+        resids = u.residues[195-1:232]
         rama = dihedrals.Ramachandran(resids).run()
         arrs["rama"] = rama.results.angles
         utils.save_array(np_files["rama"], arrs["rama"])
         
         # Chi1 dihedrals
         arrs["chi_1s"] = np.zeros((len(arrs["time_ser"]), len(resids)))
-        for res in resids:
+        for r, res in enumerate(resids):
             group = res.chi1_selection()
             if group is not None:
                 dihs = dihedrals.Dihedral([group]).run()
-                arrs["chi_1s"][:,res.ix-195-1] = dihs.results.angles[:,0]
+                arrs["chi_1s"][:,r] = dihs.results.angles[:,0]
         utils.save_array(np_files["chi_1s"], arrs["chi_1s"])
         
         # Salt-bridge contacts
@@ -199,8 +198,9 @@ def main(argv):
     plot_rgyr(arrs["r_gyr"], arrs["time_ser"])
 
     # Plots for individual residues: Ramachandran and Chi_1
-    for i, id in enumerate(np.arange(198,232)):
+    for i, id in enumerate(np.arange(195-1,232)):
         res = u.residues[id]
+        print(res)
         plot_ramachandran(arrs["rama"][:,i,0], arrs["rama"][:,i,1], res)
         plot_chi1(res, arrs["chi_1s"][:,i])
 
