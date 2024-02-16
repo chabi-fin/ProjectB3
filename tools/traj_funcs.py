@@ -225,3 +225,18 @@ def fix_gly_names(pdb):
     # Write out the pdb file
     with open(pdb, "w") as f:
         f.writelines(pdb_new_lines)
+
+def write_subset_to_pdb(atom_group, output_filename):
+    # Open a new PDB file for writing
+    with open(output_filename, 'w') as pdbfile:
+        # Write atoms to the PDB file
+        for atom in atom_group.atoms:
+            # Write atom line preserving original atom index
+            # pdbfile.write(f"ATOM  {atom.ix:>5} {atom.name:<4}{atom.resname:>3} {atom.resid:>4}    "
+            #               f"{atom.position[0]:>8.3f}{atom.position[1]:>8.3f}{atom.position[2]:>8.3f}"
+            #               f"{1.00:>6.2f}{0.00:>6.2f}          {atom.element:>2}\n")
+            pdbfile.write(f"ATOM  {atom.ix:>5}  {atom.name:<4}{atom.resname:>3} "
+                          f"X{atom.resid:>4}    "
+                          f"{atom.position[0]:>8.3f}{atom.position[1]:>8.3f}{atom.position[2]:>8.3f}"
+                          f"{1.00:>6.2f}{0.00:>6.2f}          {atom.element:>2}\n")
+
