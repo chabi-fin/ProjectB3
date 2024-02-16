@@ -176,3 +176,52 @@ def align_refs(ref, ref_path):
         f"{ os.path.dirname(ref_path) }/{ ref }_ref_aligned.pdb")
 
     return None
+
+def mutate_to_glycine(structure, residue_id):
+    """
+    """
+    gly_names = ["N", "H", "CA", "HA1", "HA2", "C", "O"]
+    # Find the specified residue
+    for residue in structure[0]["A"]:
+        if residue.id[1] == residue_id:
+            # Mutate the residue to glycine
+            residue.resname = "GLY"
+            residue.id = (" ", residue_id, " ")
+
+            # Remove atoms extraneous to glycine
+            removal_atoms = []
+            for atom in residue.get_atoms():
+                # Modify the atom name if needed
+                if atom.name == "HA": 
+                    atom.name = "HA1"
+                elif atom.name == "CB":
+                    atom.name = "HA2"
+                if not any([atom.name == a for a in gly_names]):
+                    removal_atoms.append(atom.name)
+
+            for atom in removal_atoms:
+                residue.detach_child(atom)
+
+    return structure
+
+def fix_gly_names(pdb):
+    # Get the plumed template file
+    with open(pdb, "r") as f:
+        pdb_lines = f.readlines()  
+
+    # Fix the atom names of glycine
+    pdb_new_lines = []
+    for line in pdb_lines:
+        if "HA  GLY A  57" in line:
+            line = line.replace("HA  GLY A  57", "HA1 GLY A  57")
+        if "CB  GLY A  57" in line:
+            line = line.replace("CB  GLY A  57", "HA2 GLY A  57")
+        if "HA  GLY A 200" in line:
+            line = line.replace("HA  GLY A 200", "HA1 GLY A 200")
+        if "CB  GLY A 200" in line:
+            line = line.replace("CB  GLY A 200", "HA2 GLY A 200")
+        pdb_new_lines.append(line)
+
+    # Write out the pdb file
+    with open(pdb, "w") as f:
+        f.writelines(pdb_new_lines)
