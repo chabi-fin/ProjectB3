@@ -30,7 +30,7 @@ def main(argv):
                             dest = "recalc",
                             default = False,
                             help = """Chose whether the trajectory arrays
-                                should  be recomputed.""")
+                                should be recomputed.""")
         parser.add_argument("-f", "--figpath",
                             action = "store",
                             dest = "fig_path",
@@ -74,7 +74,6 @@ def main(argv):
 
     # Extract torsion data from the simulation or load from file
     df_tor, u = get_torsions(data_path, topol, xtc, recalc=recalc)
-    # print(df_tor)
 
     # Determine the normalized mutual information for all torsion pairs
     df_nmi = get_nmis(data_path, df_tor, recalc=recalc)
@@ -95,39 +94,48 @@ def main(argv):
     #       "RATIO: { empty / elements *100 }"))
 
     # Analyze the NMI matrix by eigendecomposition
-    # analyze_eigs(df_nmi, fig_path)
-    # plot_mi_hist(df_nmi, fig_path)
+    analyze_eigs(df_nmi, fig_path, descript="_full_torsion")
+    plot_mi_hist(df_nmi, fig_path, descript="_full_torsion")
+    analyze_eigs(df_corr, fig_path, descript="_full_torsion_corr")
+    plot_mi_hist(df_corr, fig_path, descript="_full_torsion_corr")
 
     # Cluster using spectral clustering
-    # clusters = get_clusters(df_nmi, 3)
-    # print(clusters)
+    clusters = get_clusters(df_nmi, 3, cluster_path, "_full_torsion")
+    print(clusters)
 
-    # Make a plot of the NMI matrix
-    # plot_nmi(df_nmi, f"{ fig_path }/torsions_nmi.png")
+    # Make a plot of the torsion NMI matrix
+    plot_nmi(df_nmi, f"{ fig_path }/all_torsions_nmi.png")
 
     # Determine the NMI between residue pairs, using a 
     # summation over the torsions
-    corr = False
-    res_nmi = get_res_nmi(data_path, df_nmi, u, recalc=recalc, corrected=corr)
-    # analyze_eigs(res_nmi, fig_path)
+    res_nmi = get_res_nmi(data_path, df_nmi, u, recalc=recalc, 
+                          corrected=False)
+    res_nmi_corr  = get_res_nmi(data_path, df_corr, u, recalc=True, 
+                                corrected=True)
+    analyze_eigs(res_nmi, fig_path, descript="_res")
+    analyze_eigs(res_nmi_corr, fig_path, descript="_res_corr")
     clusters = get_clusters(res_nmi.fillna(0), 2, cluster_path, 
-                            "res_nmi_corr")
+                            "_res_nmi_corr")
+    clusters_corr = get_clusters(res_nmi_corr.fillna(0), 2, cluster_path, 
+                            "_res_nmi_corr")
     visualize_clusters(clusters, cluster_path, "open_ref", 
                         f"{ c.struct_head }/open_ref_state.pdb",
-                        corrected=corr)
+                        corrected=True)
     visualize_clusters(clusters, cluster_path, "closed_ref", 
                         f"{ c.struct_head }/closed_ref_state.pdb",
-                        corrected=corr)
+                        corrected=True)
 
-    # plot_nmi(res_nmi, f"{ fig_path }/residues_nmi.png")
+    plot_nmi(res_nmi, f"{ fig_path }/residues_nmi.png")
+    plot_nmi(res_nmi_corr, f"{ fig_path }/residues_nmi_corr.png")
 
     # Makes a (boolean) matrix for the residue contacts
-    # contacts = identify_contacts(data_path, topol, xtc, 
-    #                              res_nmi, recalc=False)
-    # plot_nmi(contacts, f"{ fig_path }/residue_contacts.png")
+    contacts = identify_contacts(data_path, topol, xtc, 
+                                 res_nmi, recalc=False)
+    plot_nmi(contacts, f"{ fig_path }/residue_contacts.png")
 
     # Construct a nework based on connected residues
-    # res_graph = make_graph(res_nmi, contacts, data_path)
+    res_graph = make_graph(res_nmi, contacts, data_path)
+    res_graph = make_graph(res_nmi_corr, contacts, data_path)
 
     return None
 
@@ -191,6 +199,8 @@ def get_clusters(df, n_clust, path, descript=""):
         for all torsion/residue pairs.
     n_clust: int
         Number of clusters to split data into. 
+    path : str
+        Path for saving pandas series of classification markers.
     descript : str
         A short descriptor for naming csv file. 
 
@@ -201,7 +211,7 @@ def get_clusters(df, n_clust, path, descript=""):
 
     """
     # DataFrame stored as a csv file
-    df_file = f"{ path }/{ n_clust }clust_{ descript }.csv"
+    df_file = f"{ path }/{ n_clust }clust{ descript }.csv"
 
     # Use scikit-learn implemetation of spectral clustering
     clustering = SpectralClustering(
@@ -220,7 +230,7 @@ def get_clusters(df, n_clust, path, descript=""):
 
     return clusters
 
-def analyze_eigs(df, fig_path):
+def analyze_eigs(df, fig_path, descript=""):
     """Makes basic plots to understand NMI matrix eigendecomposition. 
 
     Parameters
@@ -230,6 +240,8 @@ def analyze_eigs(df, fig_path):
         which should undergo an eigendecomposition. 
     fig_path : str
         Directory for storing the eigendecomposition figures. 
+    descript : str
+        A short descriptor for naming plots. 
 
     Returns
     -------
@@ -243,8 +255,9 @@ def analyze_eigs(df, fig_path):
         """Makes a scree plot using the first n eigenvals.
 
         """
-        plt.scatter(np.arange(1, n+1), eigvals[:n], s=20)
-        utils.save_figure(fig, f"{ fig_path }/eigenvalues.png")
+        fig, ax = plt.subplots()
+        ax.scatter(np.arange(1, n+1), eigvals[:n], s=20)
+        utils.save_figure(fig, f"{ fig_path }/eigenvalues{ descript }.png")
         plt.close()
 
     eigvals, eigvecs = np.linalg.eig(df.fillna(0))
@@ -256,12 +269,20 @@ def analyze_eigs(df, fig_path):
     plot_eigvals(eigvals, len(eigvals), fig_path)
 
     # 2D scatter plots for major eigenvectors
+    fig, axes = plt.subplots(2,2)
+    axes = axes.flatten()
+    count = 0 
     for i, j in [(0,1),(0,2),(1,2)]:
 
-        plt.scatter(eigvecs[:,i], eigvecs[:,j], 
+        ax = axes[count]
+        ax.scatter(eigvecs[:,i], eigvecs[:,j], 
                     c=np.arange(1,len(eigvals)+1), marker="o")
-        utils.save_figure(fig, f"{ fig_path }/{ i + 1 }_{ j + 1 }.png")
-        plt.close()
+        ax.set_xlabel(f"{i + 1}")
+        ax.set_ylabel(f"{j + 1}")
+        count += 1
+
+    utils.save_figure(fig, f"{ fig_path }/2d_eigenvecs{ descript }.png")
+    plt.close()
 
     # Make 3D plot of first 3 eigenvectors
     fig = plt.figure()
@@ -437,7 +458,7 @@ def calc_MI(tor1, tor2, norm_type="NMI"):
     return nmi
 
 def get_nmis(path, df_tor, recalc=False):
-    """Makes a symmetric matrix of the NMI for all torsion pairs.
+    """Makes a matrix of the NMI for all torsion pairs.
 
     Parameters
     ----------
@@ -492,7 +513,7 @@ def get_nmis(path, df_tor, recalc=False):
         for i in df_nmis.columns.to_list():
             for j in df_nmis.index.to_list():
                 print(i, j)
-                nmi = calc_MI(df_tor[i], df_tor[j])
+                nmi = calc_MI(df_tor[i], df_tor[j], norm_type="Adjusted")
                 df_nmis.loc[i,j] = nmi
                 df_nmis.loc[j,i] = nmi
 
@@ -541,7 +562,7 @@ def apply_nmi_corrections(df_tor, df_nmi, path):
     # print(nmi_threshold)
     # print(min(nmi_threshold.values()), max(nmi_threshold.values()))
 
-    df_corr = df_nmi.mask(df_nmi > 0.1, np.nan)
+    df_corr = df_nmi.mask(df_nmi < 0.1, np.nan)
 
     # if not (df_corr.values == df_corr.values.T).all().all():
     #     print("ERROR: Non-symmetric NMI matrix.")
@@ -550,7 +571,7 @@ def apply_nmi_corrections(df_tor, df_nmi, path):
     return df_corr
 
 def get_res_nmi(path, df, u, recalc=False, corrected=False):
-    """Determines the NMI from the corrected torsional NMIs.
+    """Determines the residue NMI from torsional NMIs.
 
     Parameters
     ----------
@@ -571,8 +592,8 @@ def get_res_nmi(path, df, u, recalc=False, corrected=False):
     Returns
     -------
     res_nmi : pd.DataFrame
-        A smaller matrix of the NMI between entire residues. Consists of the 
-        sum of torsional NMIs between the residues. 
+        A smaller matrix of the NMI between entire residues. Consists of 
+        the sum of torsional NMIs between the residues. 
 
     """
     # Store calculated outputs as numpy arrays, use analysis dir up one level
@@ -602,16 +623,17 @@ def get_res_nmi(path, df, u, recalc=False, corrected=False):
 
         n = df.columns.get_level_values("Res ID").unique()
         res_nmi = pd.DataFrame(index=n, columns=n)
+        print(n)
 
         # Iterate over residues, for i
-        for resi in u.residues:
+        for resi in u.residues[:254]:
 
             resi_id = resi.resid 
             resin = resi.resname
             name_i = f"{ resin } { resi_id }"
 
             # Get the jth residue
-            for resj in u.residues:
+            for resj in u.residues[:254]:
 
                 resj_id = resj.resid
                 resjn = resj.resname
@@ -634,7 +656,7 @@ def get_res_nmi(path, df, u, recalc=False, corrected=False):
     return res_nmi
 
 def identify_contacts(path, topol, xtc, res_nmi, recalc=False):
-    """Indentifies which residues are considered as contacts.
+    """Identifies which residues are considered as contacts.
 
     Uses a contact threshhold of 5.5 AA for the heavy atoms for at
     least 75% of the simulation data. 
@@ -680,21 +702,25 @@ def identify_contacts(path, topol, xtc, res_nmi, recalc=False):
     else:
 
         print(
-            "EVALUATING RESIDUE-RESIDUE CONTACT PAIRS as BOOLEAN with MDANALYSIS..."
+            "EVALUATING RESIDUE-RESIDUE CONTACT PAIRS as BOOLEAN "
+            "with MDANALYSIS..."
         )   
 
         n = res_nmi.columns
         df_contacts = pd.DataFrame(index=n, columns=n)
 
-        core_res, core = get_core_res() 
-        stride = 100 # Not all data is needed to determine if residues are in contact
+        core_res, core = traj_funcs.get_core_res() 
+        # Not all data is needed to determine if residues are in contact
+        stride = 100 
 
         # Load in universe objects for the simulation and the reference structures
-        u = mda.Universe(f"{ path }/{ topol }", f"{ path }/{ xtc }",  topology_format='ITP')    
+        u = mda.Universe(f"{ path }/{ topol }", f"{ path }/{ xtc }", 
+                         topology_format='ITP')    
         total_frames = int(len(u.trajectory) / stride) 
         print("\tTOTAL FRAMES ", total_frames)
 
-        align.AlignTraj(u, u.select_atoms("protein"), select=core, in_memory=True).run()
+        align.AlignTraj(u, u.select_atoms("protein"), select=core, 
+                        in_memory=True).run()
 
          # Iterate over residues
         for resi in u.residues:
@@ -709,12 +735,15 @@ def identify_contacts(path, topol, xtc, res_nmi, recalc=False):
 
             for ts in u.trajectory[::stride]:
 
-                # Calculate distances between the heavy atoms of the target residue and all atoms
+                # Calculate distances between the heavy atoms of the 
+                # target residue and all atoms
                 dists = distance_array(resi_heavy.positions, 
                                         u.atoms.positions)
 
-                # Identify atoms in contact based on the distance threshold 5.5 AA
-                # The method .any() qualifies the atom if it contacts any heavy atom in the target
+                # Identify atoms in contact based on the distance 
+                # threshold 5.5 AA
+                # The method .any() qualifies the atom if it contacts any 
+                # heavy atom in the target
                 in_contact = (dists < 5.5).any(axis=0)
 
                 # Update contact counts for each residue
@@ -751,7 +780,7 @@ def identify_contacts(path, topol, xtc, res_nmi, recalc=False):
 
     return df_contacts
 
-def make_graph(res_nmi, contacts, path):
+def make_graph(res_nmi, contacts, path, corr=False):
     """Makes a network weighted by NMI.
 
     Each residue forms a node, while the contacts determine the graph edges.
@@ -789,7 +818,10 @@ def make_graph(res_nmi, contacts, path):
 
     print(type(g))
 
-    nx.write_gexf(g, f"{ analysis_path }/connected_residues.gexf")
+    if corr:
+        nx.write_gexf(g, f"{ analysis_path }/connected_residues_corr.gexf")
+    else:
+        nx.write_gexf(g, f"{ analysis_path }/connected_residues.gexf")
 
     return g
 
@@ -864,7 +896,7 @@ def plot_nmi(df, fig_path):
         A symmetric matrix containing the normalized mutual information for
         all torsion pairs.    
     fig_path : str
-        Path to the directory for saving the figure image. 
+        Path to the figure image file. 
     
     Returns
     -------
@@ -892,21 +924,22 @@ def plot_nmi(df, fig_path):
     ax.grid(False)
 
     utils.save_figure(fig, fig_path)
-    plt.show()
     plt.close()
 
     return None
 
-def plot_mi_hist(df, fig_path):
-    """Plots a histogram of all NMIs. 
+def plot_mi_hist(df, fig_path, descript=""):
+    """Plots a histogram of all torsion pair NMIs. 
     
     Parameters
     ----------
     df : pd.DataFrame
-        A symmetric matrix containing the normalized mutual information for
-        all torsion pairs.    
+        A symmetric matrix containing the normalized mutual information
+        for all torsion pairs.    
     fig_path : str
-        Path to the directory for saving the figure image. 
+        Path to the directory for saving the figure image.
+    descript : str
+        A short descriptor for naming plots. 
     
     Returns
     -------
@@ -919,9 +952,9 @@ def plot_mi_hist(df, fig_path):
     ax.grid(axis='y', linestyle='--', alpha=0.7)
     ax.set_xlabel("NMI")
     ax.set_ylabel("frequency")
+    ax.set_xlim(0,1)
 
-    utils.save_figure(fig, f"{ fig_path }/nmi_histogram.png")
-    plt.show()
+    utils.save_figure(fig, f"{ fig_path }/nmi_histogram{ descript }.png")
     plt.close()
 
     return None
