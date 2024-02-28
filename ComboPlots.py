@@ -5,6 +5,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import pandas as pd
 import argparse
+import MDAnalysis as mda
+from tools import utils, traj_funcs
+sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
+import config.settings as cf
 from tools import utils, traj_funcs
 
 def main(argv):
@@ -12,17 +16,13 @@ def main(argv):
     try:
         parser = argparse.ArgumentParser()
 
-        parser.add_argument("-p", "--path",
-                            action = "store",
-                            nargs='+',
-                            dest = "path",
-                            default = None,
-                            help = """Set path to the data directory.""")
         parser.add_argument("-s", "--state",
                             action = "store",
                             dest = "state",
                             default = "apo",
-                            help = """Chose the type of simulation i.e. "holo", "apo", "all" or in the case of mutational, "K57G" etc.""")
+                            help = ("Chose the type of simulation i.e. 'unbiased'",
+                                "or 'mutation'."))
+        
         args = parser.parse_args()
 
     except argparse.ArgumentError:
@@ -30,70 +30,99 @@ def main(argv):
         raise
 
     # Assign group selection from argparse
-    state_paths = args.path
     state = args.state
+    
+    # Set up some path variables for state 'unbiased' or 'mutation'
+    if state == "unbiased":
+        fig_path = f"{ cf.figure_head }/unbiased_sims/combo_{ state }"
+        state_paths = {
+            "apo-open" : f"{ cf.data_head }/unbiased_sims/apo_open/analysis", 
+            "apo-closed" : f"{ cf.data_head }/unbiased_sims/apo_closed/analysis",
+            "holo-open" : f"{ cf.data_head }/unbiased_sims/holo_open/analysis",
+            "holo-closed" : f"{ cf.data_head }/unbiased_sims/holo_closed/analysis"}
+    elif state == "mutation":
+        fig_path = f"{ cf.figure_head }/mutation/combo_{ state }"
+        state_paths = {
+            "K57G" : f"{ cf.data_head }/unbiased_sims/mutation/K57G/analysis", 
+            "E200G" : f"{ cf.data_head }/unbiased_sims/mutation/E200G/analysis",
+            "double-mut" : f"{ cf.data_head }/unbiased_sims/mutation/double_mut/analysis"}
+    utils.create_path(fig_path)
 
-    path_head = "/home/lf1071fu/project_b3"
-    fig_path = f"/home/lf1071fu/project_b3/figures/unbiased_sims/combo_{ state }"
+    states = [State(name, path) for name, path in state_paths.items()]
 
-    if not state_paths:
-        state_paths = [f"{ path_head }/simulate/unbiased_sims/apo_open/analysis", 
-                     f"{ path_head }/simulate/unbiased_sims/apo_closed/analysis",
-                     f"{ path_head }/simulate/unbiased_sims/holo_open/analysis",
-                     f"{ path_head }/simulate/unbiased_sims/holo_closed/analysis"]
+    # A list of tuples for selection strings of the contacts of interest
+    selections = {
+        "K57--E200" : ("resid 57 and name NZ*","resid 200 and name OE*"),
+        "N53--E200" : ("resid 53 and name ND2","resid 200 and name OE*"),
+        "L212--E200" : ("resid 212 and name N","resid 200 and name O"),
+        "K249--K232" : ("resid 249 and name NZ","resid 232 and name O"),
+        "K249--S230a" : ("resid 249 and name N","resid 230 and name OG"),
+        "K249--S230b" : ("resid 249 and name N","resid 230 and name O"),
+        "K249--S230c" : ("resid 249 and name NZ","resid 230 and name O"),
+        "S230--I226" : ("resid 230 and name N","resid 226 and name O"),
+        "K249--E233" : ("resid 249 and name NZ","resid 233 and name OE*"),
+        "R209--S231" : ("resid 209 and name NH*",
+            "resid 231 and (name OG or name O)"),
+        "R209--N197" : ("resid 209 and name NH*","resid 197 and name OD*"),
+        "R209--E253" : ("resid 209 and name NH*","resid 253 and name OE*"),
+        "R202--E210" : ("resid 202 and name NE","resid 210 and name OE*"),
+        "K221--E223" : ("resid 221 and name NZ","resid 223 and name OE*"),
+        "R208--E222" : ("resid 208 and name NH*","resid 222 and name OE*"),
+        "K57--G207" : ("resid 57 and name NZ","resid 207 and name O"),
+        "K57--V201" : ("resid 57 and name NZ","resid 201 and name O"),
+        "R28--S205" : ("resid 28 and name NH*","resid 205 and name O"),
+        "N204--R208" : ("resid 204 and (name N or name O)",
+            "resid 208 and (name N or name O)"),
+        "E210--N204" : ("resid 204 and name ND2", "resid 210 and name OE*"),
+        "R202--E210" : ("resid 202 and (name NE* or name NH*)",
+            "resid 210 and name OE*"),
+        "R202--W218" : ("resid 202 and (name NE* or name NH*)",
+            "resid 218 and name CZ*")
+        }
 
-    states = [State(s) for s in state_paths]
+    # Add data into the State objects
+    for state in states:
 
-    # Load in np.array data into Conform objects
-    for s in states:
+        # Load in np.array data produced by BasicMD.py 
+        load_arrs(state)
 
-        data_path = s.path
-
-        # Read calculated outputs from numpy arrays
-        if "open" in s.path:
-            np_files = { "RMSD" : f"{ data_path }/rmsd_open.npy"}
-        else: 
-            np_files = { "RMSD" : f"{ data_path }/rmsd_closed.npy"}
-        np_files.update({"RMSF" : f"{ data_path }/rmsf.npy", 
-                         "calphas" : f"{ data_path }/calphas.npy",
-                         "rad_gyr" : f"{ data_path }/rad_gyration.npy", 
-                         "salt" : f"{ data_path }/salt_dist.npy", 
-                         "timeser" : f"{ data_path }/timeseries.npy",
-                         "hbonds" : f"{ data_path }/hpairs.npy"
-                        })
-
-        # Load numpy arrays into the Conform objects
-        if all(list(map(lambda x : os.path.exists(x), np_files.values()))):
-
-            for key, file in np_files.items(): 
-                s.add_array(key, np.load(file, allow_pickle=True))
-
-        else: 
-
-            print("Missing Numpy files! Run BasicMD.py first.")
-            exit(1)
+        # Get arrays for the contacts of interest
+        get_dist_arrs(state, selections)
 
     # Make plots for simulation analysis
-    print(fig_path)
-    stride = 50
-    plot_rmsf(states, fig_path)
-    plot_rmsd_time(states, fig_path, stride=stride)
-    plot_rgyr(states, fig_path, stride=stride)
+    # stride = 50
+    # plot_rmsf(states, fig_path)
+    # plot_rmsd_time(states, fig_path, stride=stride)
+    # plot_rgyr(states, fig_path, stride=stride)
 
-    plot_salt_bridges(states, fig_path, stride=stride)
-    plot_hbonds(states, fig_path, stride=stride)
+    # plot_salt_bridges(states, fig_path, stride=stride)
+    # plot_hbonds(states, fig_path, stride=stride)
+
+    styles = {"apo-open" : ("#2E7D32", "solid", "X"), 
+          "apo-closed" : ("#1976D2", "dashed", "X"),
+          "holo-open" : ("#FF6F00", "solid", "o"), 
+          "holo-closed" : ("#8E24AA", "dashed", "o"),
+          "K57G" : ("#00897B", "solid", "o"),
+          "E200G" : ("#FF6F00", "solid", "o"),
+          "double-mut" : ("#5E35B1", "solid", "o")}
+     
+    # Make histograms of the contact distances
+    for contact in selections.keys():
+        plot_hist(states, contact, styles, fig_path)
 
     return None
 
 class State:
-    def __init__(self, path):
+    def __init__(self, name, path):
+        self.name = name
         self.path = path
         self.arrays = {}
-        if "holo" in path:
+        self.data_path = f"{ os.path.dirname(path) }/nobackup"
+        if "holo" in name:
             self.ligand = "holo"
         else:
             self.ligand = "apo"
-        if "open" in path:
+        if "open" in name:
             self.conform = "open"
         else:
             self.conform = "closed"
@@ -106,6 +135,121 @@ class State:
 
     def remove_array(self, name):
         del self.arrays[name]
+
+def get_dist_arrs(state, selections):
+    """Get distance arrays for contacts of interest.
+
+    Parameters
+    ----------
+    s : State
+        Each simulation state gets a state object in which the np
+        arrays are stored.
+    
+    Returns
+    -------
+    None.
+
+    """
+    # Load in some reference structures
+    open_state = mda.Universe(f"{ cf.struct_head }/open_ref_state.pdb")
+    closed_state = mda.Universe(f"{ cf.struct_head }/closed_ref_state.pdb")
+    ref_state = mda.Universe(f"{ cf.struct_head }/alignment_struct.pdb")
+
+    # Indicies of the inflexible residues
+    core_res, core = traj_funcs.get_core_res()
+
+    get_contacts(state, selections)
+
+    return None
+
+def load_arrs(state):
+    """Add pre-computed arrays to State object.
+
+    Parameters
+    ----------
+    s : State
+        Each simulation state gets a state object in which the np
+        arrays are stored. 
+
+    Returns
+    -------
+    None. 
+
+    """
+    analysis_path = state.path
+
+    # Read calculated outputs from numpy arrays
+    if "open" in state.path:
+        np_files = { "RMSD" : f"{ analysis_path }/rmsd_open.npy"}
+    else: 
+        np_files = { "RMSD" : f"{ analysis_path }/rmsd_closed.npy"}
+    np_files.update({"RMSF" : f"{ analysis_path }/rmsf.npy", 
+                        "calphas" : f"{ analysis_path }/calphas.npy",
+                        "rad_gyr" : f"{ analysis_path }/rad_gyration.npy", 
+                        "salt" : f"{ analysis_path }/salt_dist.npy", 
+                        "timeser" : f"{ analysis_path }/timeseries.npy",
+                        "hbonds" : f"{ analysis_path }/hpairs.npy"
+                    })
+
+    # Load numpy arrays into the State object
+    if all(list(map(lambda x : os.path.exists(x), np_files.values()))):
+
+        for key, file in np_files.items(): 
+            state.add_array(key, np.load(file, allow_pickle=True))
+
+    else: 
+
+        print("Missing Numpy files! Run BasicMD.py first.")
+        exit(1)
+
+def get_contacts(state, selections):
+    """Add timeseries of critical contacts to the State object.
+
+    Parameters
+    ----------
+    s : State
+        Each simulation state gets a state object in which the np
+        arrays are stored. 
+    selections : ((str) tuple) dict
+        Selection strings for critical contacts are given as tuples.    
+    """
+    data_path = state.data_path
+
+    if "holo" in state.name:
+        topol = f"{ data_path }/topol_Pro_Lig.top"
+    else:
+        topol = f"{ data_path }/topol_protein.top"
+    xtc = f"{ data_path }/fitted_traj_100.xtc"
+
+    u = mda.Universe(topol, xtc, topology_format='ITP')
+    u.transfer_to_memory()
+    u = traj_funcs.do_alignment(u)
+
+    from MDAnalysis.analysis.distances import distance_array
+
+    for key, select in selections.items():
+    
+        # Define the distance using the tuple of selection strings
+        sel_a = u.select_atoms(select[0])
+        sel_b = u.select_atoms(select[1])
+    
+        # Iterate over trajectory framse to get the time series
+        distances = np.zeros(u.trajectory.n_frames)
+        for ts in u.trajectory:
+            d = distance_array(sel_a.positions, sel_b.positions)
+            # Use the smallest pair distance
+            distances[ts.frame] = np.min(d)
+        
+        # Update data in the State object
+        state.add_array(key, distances)
+    
+    # Also store array of the time series
+    time_ser = np.zeros(u.trajectory.n_frames)
+    for ts in u.trajectory:
+        time_ser[ts.frame] = ts.time
+    state.add_array("timeseries", time_ser)
+
+    return None
 
 def plot_rmsf(states, path):
     """Makes an RMSF plot.
@@ -323,7 +467,7 @@ def plot_rgyr(states, path, stride=1):
 
     Parameters
     ----------
-    states : (State object) list
+    states : (State) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
     path : str
@@ -366,6 +510,46 @@ def plot_rgyr(states, path, stride=1):
     ax.set_ylim(y_min-0.2,ymax+0.5)
 
     utils.save_figure(fig, f"{ path }/rad_gyration.png")
+    plt.close()
+
+    return None
+
+def plot_hist(states, contact, styles, fig_path, bins=15, 
+    fs=20, **kwargs):
+    """Makes a histogram plot of the contact all the State objects.
+
+    Parameters
+    ----------
+    states : (State) list
+        The list of State objects contains the relevant numpy arrays
+        for each state, accessed via the "get_array()" module.
+    contact : str
+        Name of the contact which is visualized by the histogram. The
+        string is used to access the array from the relevant
+        dictionaries. 
+
+    Returns
+    -------
+    None.
+
+    """
+    fig, ax = plt.subplots(figsize=(8,8))
+    
+    for state in states:
+    
+        key = state.name
+        dist = state.get_array(contact)
+        ax.hist(dist, bins=bins, density=True, color=styles[key][0], 
+                ls=styles[key][1], lw=6, histtype='step', label=key)
+    
+    ax.set_xlabel(f"Distance { contact } " + r"($\AA$)", fontsize=fs)
+    ax.set_ylabel("Relative frequency", fontsize=fs)
+    if "xlim" in kwargs:
+        plt.xlim(kwargs["xlim"])
+    plt.legend(fontsize=fs)
+
+    utils.save_figure(fig, f"{ fig_path }/{ contact }.png")
+
     plt.close()
 
     return None
