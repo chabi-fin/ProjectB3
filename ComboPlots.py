@@ -47,38 +47,12 @@ def main(argv):
             "E200G" : f"{ cf.data_head }/unbiased_sims/mutation/E200G/analysis",
             "double-mut" : f"{ cf.data_head }/unbiased_sims/mutation/double_mut/analysis"}
     utils.create_path(fig_path)
+    print(fig_path)
 
     states = [State(name, path) for name, path in state_paths.items()]
 
     # A list of tuples for selection strings of the contacts of interest
-    selections = {
-        "K57--E200" : ("resid 57 and name NZ*","resid 200 and name OE*"),
-        "N53--E200" : ("resid 53 and name ND2","resid 200 and name OE*"),
-        "L212--E200" : ("resid 212 and name N","resid 200 and name O"),
-        "K249--K232" : ("resid 249 and name NZ","resid 232 and name O"),
-        "K249--S230a" : ("resid 249 and name N","resid 230 and name OG"),
-        "K249--S230b" : ("resid 249 and name N","resid 230 and name O"),
-        "K249--S230c" : ("resid 249 and name NZ","resid 230 and name O"),
-        "S230--I226" : ("resid 230 and name N","resid 226 and name O"),
-        "K249--E233" : ("resid 249 and name NZ","resid 233 and name OE*"),
-        "R209--S231" : ("resid 209 and name NH*",
-            "resid 231 and (name OG or name O)"),
-        "R209--N197" : ("resid 209 and name NH*","resid 197 and name OD*"),
-        "R209--E253" : ("resid 209 and name NH*","resid 253 and name OE*"),
-        "R202--E210" : ("resid 202 and name NE","resid 210 and name OE*"),
-        "K221--E223" : ("resid 221 and name NZ","resid 223 and name OE*"),
-        "R208--E222" : ("resid 208 and name NH*","resid 222 and name OE*"),
-        "K57--G207" : ("resid 57 and name NZ","resid 207 and name O"),
-        "K57--V201" : ("resid 57 and name NZ","resid 201 and name O"),
-        "R28--S205" : ("resid 28 and name NH*","resid 205 and name O"),
-        "N204--R208" : ("resid 204 and (name N or name O)",
-            "resid 208 and (name N or name O)"),
-        "E210--N204" : ("resid 204 and name ND2", "resid 210 and name OE*"),
-        "R202--E210" : ("resid 202 and (name NE* or name NH*)",
-            "resid 210 and name OE*"),
-        "R202--W218" : ("resid 202 and (name NE* or name NH*)",
-            "resid 218 and name CZ*")
-        }
+    from config.settings import selections
 
     # Add data into the State objects
     for state in states:
@@ -228,7 +202,19 @@ def get_contacts(state, selections):
     from MDAnalysis.analysis.distances import distance_array
 
     for key, select in selections.items():
-    
+
+        # Skip over inapplicable selections
+        if ("IP6" in key) & ("holo" not in state.name):
+            continue
+        if ("K57" in key) & ("K57G" in state.name):
+            continue
+        if ("K57" in key) & ("double-mut" in state.name):
+            continue
+        if ("E200" in key) & ("E200G" in state.name):
+            continue   
+        if ("E200" in key) & ("double-mut" in state.name):
+            continue
+
         # Define the distance using the tuple of selection strings
         sel_a = u.select_atoms(select[0])
         sel_b = u.select_atoms(select[1])
@@ -515,7 +501,7 @@ def plot_rgyr(states, path, stride=1):
     return None
 
 def plot_hist(states, contact, styles, fig_path, bins=15, 
-    fs=20, **kwargs):
+    fs=24, **kwargs):
     """Makes a histogram plot of the contact all the State objects.
 
     Parameters
@@ -533,11 +519,26 @@ def plot_hist(states, contact, styles, fig_path, bins=15,
     None.
 
     """
-    fig, ax = plt.subplots(figsize=(8,8))
+    fig, ax = plt.subplots(figsize=(8,4))
     
     for state in states:
-    
+
         key = state.name
+
+        # Skip over inapplicable selections
+        if ("IP6" in contact) & ("holo" not in key):
+            continue
+        if ("K57" in contact) & ("K57G" in key):
+            continue
+        if ("K57" in contact) & ("double" in key):
+            continue
+        if ("E200" in contact) & ("E200G" in key):
+            continue   
+        if ("E200" in contact) & ("double" in key):
+            continue
+
+        print(state.name)
+
         dist = state.get_array(contact)
         ax.hist(dist, bins=bins, density=True, color=styles[key][0], 
                 ls=styles[key][1], lw=6, histtype='step', label=key)
