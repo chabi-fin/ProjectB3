@@ -23,6 +23,13 @@ r1, r2 = 206, 215
 # Aesthetics
 open_color = "#A1DEA1"
 closed_color = "#EAAFCC"
+styles = {"apo-open" : ("#2E7D32", "solid", "X"), 
+          "apo-closed" : ("#1976D2", "dashed", "X"),
+          "holo-open" : ("#FF6F00", "solid", "o"), 
+          "holo-closed" : ("#8E24AA", "dashed", "o"),
+          "K57G" : ("#00897B", "dotted", "P"),
+          "E200G" : ("#FF6F00", "dotted", "P"),
+          "double-mut" : ("#5E35B1", "dotted", "P")}
 
 # Critical contacts dictionary
 selections = {
@@ -90,4 +97,10 @@ selections = {
     "D228--K232" : ("resid 228 and name O", "resid 232 and name N"),
     "I229--E233" : ("resid 229 and name O", "resid 233 and name N"),
     "S224--I229" : ("resid 224 and name O", "resid 229 and name N"),
+    # Does this network change?
+    "K57--E206" : ("resid 206 and name O*", "resid 57 and name NZ"), # backbone or sidechain of E206
+    "E21--K22" : ("resid 21 and name OE*","resid 22 and name NZ*"),
+    "K22--E49" : ("resid 21 and name OE*","resid 22 and name NZ*"),
+    "R28--E49" : ("resid 49 and name OE*","resid 28 and name NH*"),
+    "Q198--E233" : ("resid 198 and name NE2","resid 233 and name OE*"),
     }
