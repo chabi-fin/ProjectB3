@@ -115,7 +115,10 @@ def main(argv):
     elif state == "apo":
         colvar_columns = ["time", "opendot", "closeddot", "theta1", 
             "theta2", "bias", "force"]
-
+    elif state == "apo_K57G": 
+        colvar_columns = ["time", "opendot", "closeddot", "theta1", 
+            "theta2", "bias", "force"]
+            
     bs_path = f"{ home }/bootstrap_files"
     if not os.path.exists(bs_path):
         os.makedirs(bs_path)
@@ -127,6 +130,7 @@ def main(argv):
     if no_bs:
 
         fes = get_no_bs_fes(home, bs_path)
+        print(fes)
 
         # Make the 2D FES plot
         plot_2dfes(fes, vec_open, vec_closed, fig_path)
@@ -221,7 +225,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         fes = np.divide(fsum, count, where=count != 0)
 
     mask = ((-1e2 < fes) & (fes < 1e2) & (count != 0))
-    mask[0] = 0
+    mask[0] = False
     # mask = (fes < 1e6)
 
     x, y = open_bins[mask], closed_bins[mask]
@@ -229,6 +233,11 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     #x, y = open_bins, closed_bins
     #z = fes
     # z, err = fes[mask], ferr[mask]
+
+    closed_mask = z[y>3]
+    open_mask = z[y<=3]
+    print(f"MIN-closed: { np.min(closed_mask)}\nMIN-open: { np.min(open_mask)}")
+    print(f"diff : {np.min(open_mask) - np.min(closed_mask)}")
 
     d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, 
             norm=mcolors.Normalize(vmin=0, vmax=100))
@@ -253,17 +262,17 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     tri = Triangulation(x, y)
 
     # Create contour lines on the XY plane using tricontour
-    contours = ax.tricontour(tri, z, cmap="inferno")
+    contours = ax.tricontour(tri, z, cmap="inferno", levels=6)
 
     # Colormap settings
     cbar = plt.colorbar(d, ticks=np.arange(0, 101, 20))
     # if angle_coord:
     #     cbar.set_label(r'$F(\theta_{open}, \theta_{closed})$ (kJ / mol)', fontsize=24, labelpad=10)
     # else: 
-    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=28, labelpad=10)
+    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=24, labelpad=10)
     cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
     cbar.outline.set_linewidth(2)
-    ax.clabel(contours, inline=1, fontsize=20)
+    ax.clabel(contours, inline=1, fontsize=24)
 
     # Add both reference positions
     if angle_coord:
@@ -299,11 +308,11 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     plt.legend(fontsize=24)
 
     if angle_coord:
-        utils.save_figure(fig, f"{ fig_path }/2dfes_angles_ { state }.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_angles_{ state }.png")
     elif not no_bs:
-        utils.save_figure(fig, f"{ fig_path }/2dfes_bs_ { state }.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_bs_{ state }.png")
     else:
-        utils.save_figure(fig, f"{ fig_path }/2dfes_ { state }.png")
+        utils.save_figure(fig, f"{ fig_path }/2dfes_{ state }.png")
     plt.show()
 
     plt.close()
@@ -516,25 +525,26 @@ def get_bias_data(home, recalc=False):
         # Add all the COLVAR data to one large DataFrame 
         # NB requires a lot of memory!
         for i in range(nw):
-            df = pd.read_csv(f"{ home }/COLVAR_" + str(i+1)+".dat",
+            df = pd.read_csv(f"{ home }/COLVAR_" + str(i+1) + ".dat",
                        delim_whitespace=True, comment='#')
             if "bias" not in locals():
-                frames = len(df.iloc[:,-2]) / nw
-                print("Number of frames", frames)
+                frames = len(df.iloc[:,-2])
+                fpw = frames // nw
                 bias = np.zeros((frames, nw))
-            # Reshape the bias array
+            # Reshape the bias array which is the second to last column
+            print("Number of frames", frames)
             bias[:,i] = df.iloc[:,-2]
-
-        print(f"BIAS ARRAY {bias.shape}\n")
 
         utils.save_array(bias_file, bias)
 
     else:
 
         bias = np.load(bias_file, allow_pickle=True)
-        frames = len(bias[:,0]) // nw
+        fpw = len(bias[:,0]) // nw
+    
+    print(f"BIAS ARRAY {bias.shape}\n")
 
-    return bias, frames
+    return bias, fpw
 
 def make_ith_histogram(df, bs_path, i, include_sb=False):
     """Use plumed HISTOGRAM function to obtain reweighted histograms for 
@@ -617,7 +627,7 @@ def get_no_bs_fes(home, bs_path):
     if not os.path.exists(fes_dat) or recalc:
 
         # Get the biasing data from COLVAR files
-        bias, frames = get_bias_data(home, recalc=False)
+        bias, fpw = get_bias_data(home, recalc=False)
 
         # Get collective variable data from any COLVAR file
         df = pd.read_csv(f"{ home }/COLVAR_1.dat", delim_whitespace=True,
@@ -628,14 +638,14 @@ def get_no_bs_fes(home, bs_path):
         # Reshape data for bootstrapping; this actually does nothing here
         # since the original column order is retained in "c", but the 
         # bootstrapping step is still performed for consistency
-        bb = bias.reshape((nb, frames // nb, nw))
+        bb = bias.reshape((nw, nb, fpw // nb, nw))
         c = np.arange(0, nb)
         colvar_weights = pd.DataFrame()
         for col in df.columns:
-            colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
+            colvar_weights[col] = bs_cols(df, col, fpw, nb , c) 
 
         # Get the log weights for reweighting with WHAM 
-        w = wham.wham(bb[c,:,:].reshape((-1, nw)), T=kBT)
+        w = wham.wham(bb[:,c,:,:].reshape((-1, nw)), T=kBT)
         print("wham shape : ", np.shape(w["logW"]), type(w["logW"]))
         print(w["logW"])
         
@@ -646,7 +656,7 @@ def get_no_bs_fes(home, bs_path):
         if state == "holo":
             make_ith_histogram(colvar_weights, bs_path, "fulldata",
                 include_sb=True)
-        elif state == "apo":
+        else:
             make_ith_histogram(colvar_weights, bs_path, "fulldata")
 
     # Load in FES table and remove NaN
@@ -683,7 +693,7 @@ def get_bs_fes(home, bs_path, np_ave_files):
 
     """
     # Get the biasing data from COLVAR files
-    bias, frames = get_bias_data(home, recalc=False)
+    bias, fpw = get_bias_data(home, recalc=False)
 
     print(bias)
     print(f"SIZE OF BIAS { np.shape(bias) }")
@@ -696,7 +706,7 @@ def get_bs_fes(home, bs_path, np_ave_files):
 
     # Reshape the bias into blocks that can be used for bootstrapping
     # bb = bias.reshape((nb, frames // nb, nw))
-    bb = bias.reshape((nw, nb, frames // nb, nw))
+    bb = bias.reshape((nw, nb, fpw // nb, nw))
 
     # Initialize arrays for the histogram data
     fsum, fsq_sum = np.zeros((nbins + 1)**2), np.zeros((nbins + 1)**2)
@@ -719,7 +729,7 @@ def get_bs_fes(home, bs_path, np_ave_files):
             # Write the logweights to a pandas table for reweighting
             colvar_weights = pd.DataFrame()
             for col in df.columns:
-                colvar_weights[col] = bs_cols(df, col, frames, nb , c) 
+                colvar_weights[col] = bs_cols(df, col, fpw, nb , c) 
             colvar_weights["logweights"] = w["logW"]
 
             # Use plumed to make reweighted histograms
@@ -743,7 +753,7 @@ def get_bs_fes(home, bs_path, np_ave_files):
 
     return pfes, fsum, fsq_sum, count
 
-def bs_cols(df, col, frames, nb, c):
+def bs_cols(df, col, fpw, nb, c):
     """Reshape column arrays for bootstrapping.
 
     Parameters
@@ -752,8 +762,8 @@ def bs_cols(df, col, frames, nb, c):
         Table of data from a COLVAR file.
     col : str
         Column name.
-    frames : int
-        Number of frames in the concatenated traj
+    fpw : int
+        Number of frames in each window
     nb : int
         Number of bootstraps
     c : np.array
@@ -768,7 +778,7 @@ def bs_cols(df, col, frames, nb, c):
     """
     # Get the columns data and reshape into blocks
     arr = np.array(df[col].iloc[1:])
-    arr = arr.reshape((nw, nb, frames // nb))
+    arr = arr.reshape((nw, nb, fpw // nb))
 
     # Select blocks and flatten back into a 1d array with the 
     # original array length
