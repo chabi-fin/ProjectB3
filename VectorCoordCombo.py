@@ -65,10 +65,10 @@ def main(argv):
                             action = "store",
                             dest = "paths",
                             nargs='+',
-                            default = ["unbiased_sims/mutation/K57G/noba"
-                                "ckup", "unbiased_sims/mutation/E200G/no"
-                                "backup", "unbiased_sims/mutation/double"
-                                "_mut/nobackup"],
+                            default = ["unbiased_sims/mutation/double_"
+                                "mut/nobackup", "unbiased_sims/mutation"
+                                "/E200G/nobackup", "unbiased_sims/mutat"
+                                "ion/K57G/nobackup"],
                             help = """Set path to the data directory.""")                       
         args = parser.parse_args()
 
@@ -100,6 +100,11 @@ def main(argv):
         "apo-closed" : f"{ data_head }/unbiased_sims/apo_closed/nobackup",
         "holo-open" : f"{ data_head }/unbiased_sims/holo_open/nobackup",
         "holo-closed" : f"{ data_head }/unbiased_sims/holo_closed/nobackup"}
+        
+    if state == "apo":
+        data_paths = [sim_paths["apo-open"], sim_paths["apo-closed"]]
+    elif state == "holo":
+        data_paths = [sim_paths["holo-open"], sim_paths["holo-closed"]]
 
     # Get the reference beta vectors
     ref_state, vec_open, vec_closed = get_ref_vecs(struct_path)
@@ -287,27 +292,18 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
     # Plot the two products over the traj
     fig, ax = plt.subplots(constrained_layout=True, figsize=(8,8))
 
-    def get_color(traj):
-        "Makes a formatted lable for plotting."
-        colors = {"af 1" : "#ff5500", "af 2" : "#ffcc00", "af 3" : "#d9ff00", 
-            "af 4" : "#91ff00", "af 5" : "#00ffa2", "af 6" : "#2bff00",
-            "af 7" : "#00ffe1", "af 8" : "#00e5ff", "af 9" : "#0091ff",
-            "K57G" : "#ebba34", "double_mut" : "#36b3cf", "E200G" : "#8442f5"}#
-
-        if "open" in traj:
-            return "#EAAFCC"
-        elif "closed" in traj:
-            return "#A1DEA1"
-        elif traj in colors.keys():
-            return colors[traj]
-        else:
-            return None
+    colors = {"af 1" : "#FFD700", "af 2" : "#FFA07A", "af 3" : "#4682B4", 
+        "af 4" : "#8A2BE2", "af 5" : "#FFD700", "af 6" : "#20B2AA",
+        "af 7" : "#FF6347", "af 8" : "#ffa200", "af 9" : "#b8238b",
+        "K57G" : "#ebba34", "double_mut" : "#36b3cf", "E200G" : "#8442f5",
+        "apo_open" : "#2E7D32", "apo_closed" : "#1976D2", 
+        "holo_open" : "#FF6F00", "holo_closed" : "#8E24AA"}
 
     def get_label(traj):
         "Makes a formatted lable for plotting."
 
-        labels = {"apo_open" : "apo open", "apo_closed" : "apo closed", 
-                  "holo_open" : "holo open", "holo_closed" : "holo closed",
+        labels = {"apo_open" : "apo-open", "apo_closed" : "apo-closed", 
+                  "holo_open" : "holo-open", "holo_closed" : "holo-closed",
                   "K57G" : "K57G", "double_mut" : "K57G + E200G", 
                   "E200G" : "E200G", "af 1" : "af 1", "af 2" : "af 2",
                   "af 3" : "af 3", "af 4" : "af 4", "af 6" : "af 5",
@@ -319,7 +315,8 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
             return traj
 
     trajs = unique_values = df['traj'].unique().tolist()
-    print(trajs)
+    if state == "mutants":
+        trajs = ["double_mut", "E200G", "K57G"]
 
     for i, t in enumerate(trajs):
 
@@ -332,13 +329,13 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
 
             ax.scatter(traj_df["angle-open"], traj_df["angle-closed"], 
                         label=get_label(t), alpha=1, marker="o", 
-                        color=get_color(t), s=150)       
+                        color=colors[t], s=150)       
 
         else:
 
             ax.scatter(traj_df["dot-open"], traj_df["dot-closed"], 
                         label=get_label(t), alpha=1, marker="o", s=150, 
-                        color=get_color(t))
+                        color=colors[t])
 
     # Add in reference positions
     if angles_coord: 
