@@ -10,6 +10,7 @@ from tools import utils, traj_funcs
 sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 import config.settings as cf
 from tools import utils, traj_funcs
+import subprocess
 
 def main(argv):
 
@@ -29,6 +30,8 @@ def main(argv):
         print("Command line arguments are ill-defined, please check the arguments")
         raise
 
+    global styles, fig_path
+
     # Assign group selection from argparse
     state = args.state
     
@@ -47,42 +50,47 @@ def main(argv):
             "E200G" : f"{ cf.data_head }/unbiased_sims/mutation/E200G/analysis",
             "double-mut" : f"{ cf.data_head }/unbiased_sims/mutation/double_mut/analysis"}
     utils.create_path(fig_path)
-    print(fig_path)
 
     states = [State(name, path) for name, path in state_paths.items()]
 
     # A list of tuples for selection strings of the contacts of interest
-    from config.settings import selections
+    # and a dictionary for styles related to consistent plotting
+    selections = cf.selections
+    styles = cf.styles
 
     # Add data into the State objects
     for state in states:
 
         # Load in np.array data produced by BasicMD.py 
-        load_arrs(state)
+        #load_arrs(state)
 
         # Get arrays for the contacts of interest
         get_dist_arrs(state, selections)
 
-    # Make plots for simulation analysis
+        # Load in SASA data computed with gmx sasa
+        get_sasa(state, 218)
+        get_sasa(state, 200)
+        get_sasa(state, 57)
+        get_sasa(state, 214)
+
+    # Make plots for time series
     # stride = 50
-    # plot_rmsf(states, fig_path)
-    # plot_rmsd_time(states, fig_path, stride=stride)
-    # plot_rgyr(states, fig_path, stride=stride)
+    # plot_rmsf(states)
+    # plot_rmsd_time(states, stride=stride)
+    # plot_rgyr(states, stride=stride)
 
-    # plot_salt_bridges(states, fig_path, stride=stride)
-    # plot_hbonds(states, fig_path, stride=stride)
-
-    styles = {"apo-open" : ("#2E7D32", "solid", "X"), 
-          "apo-closed" : ("#1976D2", "dashed", "X"),
-          "holo-open" : ("#FF6F00", "solid", "o"), 
-          "holo-closed" : ("#8E24AA", "dashed", "o"),
-          "K57G" : ("#00897B", "solid", "o"),
-          "E200G" : ("#FF6F00", "solid", "o"),
-          "double-mut" : ("#5E35B1", "solid", "o")}
+    # plot_salt_bridges(states, stride=stride)
+    # plot_hbonds(states, stride=stride)
      
-    # Make histograms of the contact distances
+    # # Make histograms of the contact distances
     for contact in selections.keys():
-        plot_hist(states, contact, styles, fig_path)
+        plot_hist(states, contact)
+
+    # Make histograms of the SASA for W218 and E200
+    plot_sasa(states, 218, "TYR")
+    plot_sasa(states, 200, "GLU")
+    plot_sasa(states, 57, "LYS")
+    plot_sasa(states, 214, "HIS")
 
     return None
 
@@ -158,11 +166,11 @@ def load_arrs(state):
     else: 
         np_files = { "RMSD" : f"{ analysis_path }/rmsd_closed.npy"}
     np_files.update({"RMSF" : f"{ analysis_path }/rmsf.npy", 
-                        "calphas" : f"{ analysis_path }/calphas.npy",
-                        "rad_gyr" : f"{ analysis_path }/rad_gyration.npy", 
-                        "salt" : f"{ analysis_path }/salt_dist.npy", 
-                        "timeser" : f"{ analysis_path }/timeseries.npy",
-                        "hbonds" : f"{ analysis_path }/hpairs.npy"
+                    "calphas" : f"{ analysis_path }/calphas.npy",
+                    "rad_gyr" : f"{ analysis_path }/rad_gyration.npy", 
+                    "salt" : f"{ analysis_path }/salt_dist.npy", 
+                    "timeser" : f"{ analysis_path }/timeseries.npy",
+                    "hbonds" : f"{ analysis_path }/hpairs.npy"
                     })
 
     # Load numpy arrays into the State object
@@ -237,7 +245,71 @@ def get_contacts(state, selections):
 
     return None
 
-def plot_rmsf(states, path):
+def get_sasa(state, resid):
+    """Adds SASA data into the State object.
+
+    This loads or computes with a subprocess the SASA using gromacs.
+
+    Parameters
+    ----------
+    state : State
+        The State object is needed for array data to be included.
+
+    Returns
+    -------
+    None.
+
+    """
+    sasa_path = f"{ state.path }/../analysis/sasa_{ resid }.xvg"
+
+    # Use gromacs subprocess to get SASA data
+    if not os.path.exists(sasa_path):
+
+        # Setup variables for command-line arguements
+        p = state.data_path
+        sim_name = f"{ p }/{ state.name.replace('-','_') }"
+        if "holo" in state.name:
+            gmx_ndx_holo = (f"""echo "1 | 13\nq" | gmx22 make_ndx -f """
+            f"""{ sim_name }.tpr -o { p }/index.ndx -nobackup""")
+            surface = 24 
+            output = 25
+        else:
+            surface = 1
+            output = 19
+
+        # command-line arguements
+        gmx_ndx = (f"""echo "ri { resid }\nq" | gmx22 make_ndx -f """
+            f"""{ sim_name }.tpr -n { p }/index.ndx -o { p }/index_{ resid }.ndx -nobackup""")
+        gmx_sasa = (f"gmx22 sasa -f { p }/fitted_traj_100.xtc -s " 
+            f"{ sim_name }.tpr -o { p }/../analysis/sasa_{ resid }.xvg"
+            f" -or { p }/../analysis/res{ resid }_sasa.xvg "
+            f"-surface { surface } -output { output }"
+            f" -n { p }/index_{ resid }.ndx -nobackup")
+
+        # Calculate SASA with gmx sasa using a subprocess
+        if "holo" in state.name:
+            subprocess.run(gmx_ndx_holo, shell=True)
+        subprocess.run(gmx_ndx, shell=True)
+        subprocess.run(gmx_sasa, shell=True)
+
+    # In case something went wrong in the subprocess...
+    utils.validate_path(sasa_path, warning="Use 'gmx sasa' to extract "
+        "sasa data.\n")
+
+    # Read in the gromacs analysis output
+    gmx_sasa = np.loadtxt(sasa_path, comments=["#", "@"])
+    sasa_data = gmx_sasa[:,2]
+
+    # Print out the average for the state
+    print(f"{ state.name } { resid } : { np.round(np.average(sasa_data),2) } "
+          f"+/- { np.round(np.std(sasa_data), 2) }") 
+
+    # Add SASA data to the object
+    state.add_array(f"sasa_{ resid }", sasa_data)
+
+    return None
+
+def plot_rmsf(states):
     """Makes an RMSF plot.
 
     Parameters
@@ -245,8 +317,6 @@ def plot_rmsf(states, path):
     states : (State object) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
-    path : str
-        Path to the figure storage directory.
 
     Returns
     -------
@@ -255,17 +325,16 @@ def plot_rmsf(states, path):
     """
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    # resids = list(map(lambda x : x + 544, calphas))
-    colors = {"open" : "#EAAFCC", "closed" : "#A1DEA1"}
-    linestyles = {"holo" : "-", "apo" : "--"}
-
     for i, c in enumerate(states):
 
+        # Get state data
+        key = c.name
         calphas = c.get_array("calphas")
         rmsf = c.get_array("RMSF")
-        ax.plot(calphas, rmsf, lw=3, color=colors[c.conform], label=f"{ c.ligand }-{ c.conform }",
-                alpha=0.8, dash_capstyle='round', ls=linestyles[c.ligand], path_effects=[pe.Stroke(linewidth=5, facecolor="k",
-                foreground='#595959'), pe.Normal()])
+
+        ax.plot(calphas, rmsf, lw=6, color=styles[key][0], 
+                label=key, alpha=0.8, dash_capstyle='round', 
+                ls=styles[key][1])
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -285,12 +354,12 @@ def plot_rmsf(states, path):
     ax.set_ylim(-1,6)
     plt.legend(fontsize=20, loc=2)
 
-    utils.save_figure(fig, f"{ path }/rmsf.png")
+    utils.save_figure(fig, f"{ fig_path }/rmsf.png")
     plt.close()
 
     return None
 
-def plot_rmsd_time(states, path, stride=1):
+def plot_rmsd_time(states, stride=1):
     """Makes a timeseries RMSD plot, against the respective reference structure.
 
     Parameters
@@ -298,8 +367,6 @@ def plot_rmsd_time(states, path, stride=1):
     states : (State object) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
-    path : str
-        Path to the figure storage directory.
     stride : int
         Set the stride for the data, increasing if it is too much data in the plot
 
@@ -315,12 +382,14 @@ def plot_rmsd_time(states, path, stride=1):
 
     for i, c in enumerate(states):
 
+        # Get state data
+        key = c.name
         rmsd = c.get_array("RMSD")
         time = c.get_array("timeser")
 
-        plt.plot(time[::stride], rmsd[::stride,3], lw=3, color=colors[c.conform], 
-                label=f"{ c.ligand }-{ c.conform }", alpha=0.8, ls=linestyles[c.ligand],
-                path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
+        # Add plot for each state
+        plt.plot(time[::stride], rmsd[::stride,3], lw=6, color=styles[key][0], 
+                label=key, alpha=0.8, ls=styles[key][1])
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -339,12 +408,12 @@ def plot_rmsd_time(states, path, stride=1):
     ax.set_ylim(0,ymax)
     plt.legend(fontsize=20)
 
-    utils.save_figure(fig, f"{ path }/rmsd_time.png")
+    utils.save_figure(fig, f"{ fig_path }/rmsd_time.png")
     plt.close()
 
     return None
 
-def plot_salt_bridges(states, path, stride=1):
+def plot_salt_bridges(states, stride=1):
     """Makes a timeseries plot for the key salt bridge K57--E200.
 
     Parameters
@@ -352,8 +421,6 @@ def plot_salt_bridges(states, path, stride=1):
     states : (State object) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
-    path : str
-        Path to the figure storage directory.
 
     Returns
     -------
@@ -363,19 +430,16 @@ def plot_salt_bridges(states, path, stride=1):
 
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,6))
 
-    colors = {"open" : "#EAAFCC", "closed" : "#A1DEA1"}
-    linestyles = {"holo" : "-", "apo" : "--"}
-    filled_marker_style = dict(marker='o', markersize=10, linestyle="-", lw=3,
-                               markeredgecolor='#595959')
-
     for i, c in enumerate(states):
         
+        # Get state data
+        key = c.name
         sc = c.get_array("salt")
         time = c.get_array("timeser")
 
-        plt.plot(time[::stride], sc[::stride,3], lw=3, color=colors[c.conform], 
-                label=f"{ c.ligand }-{ c.conform }", alpha=0.8, ls=linestyles[c.ligand],
-                path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
+        # Add plot for each state
+        plt.plot(time[::stride], sc[::stride,3], lw=6, color=styles[key][0], 
+                label=key, alpha=0.8, ls=styles[key][1])
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -391,12 +455,12 @@ def plot_salt_bridges(states, path, stride=1):
     ax.set_ylabel(r"Distance K57--E200 $(\AA)$", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
-    utils.save_figure(fig, f"{ path }/salt_bridge_K57-E200.png")
+    utils.save_figure(fig, f"{ fig_path }/salt_bridge_K57-E200.png")
     plt.close()
 
     return None
 
-def plot_hbonds(states, path, stride=1):
+def plot_hbonds(states, stride=1):
     """Makes a timeseries plot for the key hbond N53--E200.
 
     Parameters
@@ -404,8 +468,6 @@ def plot_hbonds(states, path, stride=1):
     states : (State object) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
-    path : str
-        Path to the figure storage directory.
 
     Returns
     -------
@@ -415,19 +477,16 @@ def plot_hbonds(states, path, stride=1):
 
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,6))
 
-    colors = {"open" : "#EAAFCC", "closed" : "#A1DEA1"}
-    linestyles = {"holo" : "-", "apo" : "--"}
-    filled_marker_style = dict(marker='o', markersize=10, linestyle="-", lw=3,
-                               markeredgecolor='#595959')
-
     for i, c in enumerate(states):
         
+        # Get state data
+        key = c.name
         hbonds = c.get_array("hbonds")
         time = c.get_array("timeser")
 
-        plt.plot(time[::stride], hbonds[::stride,3], lw=3, color=colors[c.conform], 
-                label=f"{ c.ligand }-{ c.conform }", alpha=0.8, ls=linestyles[c.ligand],
-                path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
+        # Add plot for each state
+        plt.plot(time[::stride], hbonds[::stride,3], lw=6, color=styles[key][0], 
+                label=key, alpha=0.8, ls=styles[key][1])
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -443,12 +502,12 @@ def plot_hbonds(states, path, stride=1):
     ax.set_ylabel(r"Distance N53--E200 $(\AA)$", labelpad=5, fontsize=24)
     plt.legend(fontsize=20)
 
-    utils.save_figure(fig, f"{ path }/hbond_N53-E200.png")
+    utils.save_figure(fig, f"{ fig_path }/hbond_N53-E200.png")
     plt.close()
 
     return None
 
-def plot_rgyr(states, path, stride=1):
+def plot_rgyr(states, stride=1):
     """Makes a Radius of Gyration plot.
 
     Parameters
@@ -456,8 +515,6 @@ def plot_rgyr(states, path, stride=1):
     states : (State) list
         The list of State objects contains the relevant numpy arrays for each state, 
         accessed via the "get_array()" module.
-    path : str
-        Path to the figure storage directory.
 
     Returns
     -------
@@ -467,16 +524,16 @@ def plot_rgyr(states, path, stride=1):
 
     fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
 
-    colors = {"open" : "#EAAFCC", "closed" : "#A1DEA1"}
-    linestyles = {"holo" : "-", "apo" : "--"}
-
     for i, c in enumerate(states):
 
+        # Get state data
+        key = c.name
         r_gyr = c.get_array("rad_gyr")
         time = c.get_array("timeser")
-        plt.plot(time[::stride], r_gyr[::stride], lw=3, color=colors[c.conform], 
-                label=f"{ c.ligand }-{ c.conform }", alpha=0.8, ls=linestyles[c.ligand],
-                path_effects=[pe.Stroke(linewidth=5, foreground='#595959'), pe.Normal()])
+
+        # Add plot for each state
+        plt.plot(time[::stride], r_gyr[::stride], lw=6, color=styles[key][0], 
+                label=key, alpha=0.8, ls=styles[key][1])
 
     # Plot settings
     ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
@@ -485,7 +542,6 @@ def plot_rgyr(states, path, stride=1):
                     length=5, pad=10)
     x_labels = list(map(lambda x : str(x/1e6).split(".")[0], ax.get_xticks()))
     ax.set_xticklabels(x_labels)
-
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
@@ -495,13 +551,12 @@ def plot_rgyr(states, path, stride=1):
     y_min, ymax = ax.get_ylim()
     ax.set_ylim(y_min-0.2,ymax+0.5)
 
-    utils.save_figure(fig, f"{ path }/rad_gyration.png")
+    utils.save_figure(fig, f"{ fig_path }/rad_gyration.png")
     plt.close()
 
     return None
 
-def plot_hist(states, contact, styles, fig_path, bins=15, 
-    fs=24, **kwargs):
+def plot_hist(states, contact, bins=15, fs=24, **kwargs):
     """Makes a histogram plot of the contact all the State objects.
 
     Parameters
@@ -537,20 +592,69 @@ def plot_hist(states, contact, styles, fig_path, bins=15,
         if ("E200" in contact) & ("double" in key):
             continue
 
-        print(state.name)
-
         dist = state.get_array(contact)
         ax.hist(dist, bins=bins, density=True, color=styles[key][0], 
                 ls=styles[key][1], lw=6, histtype='step', label=key)
     
+    # Plot settings
     ax.set_xlabel(f"Distance { contact } " + r"($\AA$)", fontsize=fs)
     ax.set_ylabel("Relative frequency", fontsize=fs)
     if "xlim" in kwargs:
         plt.xlim(kwargs["xlim"])
-    plt.legend(fontsize=fs)
+    plt.legend(fontsize=20)
 
     utils.save_figure(fig, f"{ fig_path }/{ contact }.png")
+    plt.close()
 
+    return None
+
+def plot_sasa(states, resid, res_type):
+    """Makes a histogram plot of the W218 SASA data.
+
+    Parameters
+    ----------
+    states : (State) list
+        The list of State objects contains the relevant numpy arrays
+        for each state, accessed via the "get_array()" module.
+    resid : int
+        The residue id for the sasa data.
+    res_type : str
+        The residues type, used in the plots x-axis.
+
+    Returns
+    -------
+    None.
+
+    """
+    fig, ax = plt.subplots(figsize=(8,4))
+
+    # Add reference data as vertical lines
+    if resid == 218:
+        ax.axvline(x=0.876, color=cf.closed_color, ls="solid", 
+                    label="open-ref", lw=5, 
+                    path_effects=[pe.Stroke(linewidth=8, 
+                    foreground='#242424'), pe.Normal()])
+        ax.axvline(x=0.314, color=cf.open_color, ls="dashed", 
+                    label="closed-ref", lw=5,
+                    path_effects=[pe.Stroke(linewidth=8, 
+                    foreground='#242424'), pe.Normal()])
+
+    for state in states:
+
+        # Add a histogram for SASA of each state
+        key = state.name
+        ax.hist(state.get_array(f"sasa_{ resid }"), bins=20, density=True, 
+                color=styles[key][0], lw=6, ls=styles[key][1], 
+                histtype='step', label=key)
+    
+    # Plot settings
+    ax.set_xlabel(f"SASA of { res_type } { resid } (nm²)", fontsize=24)
+    ax.set_ylabel("Relative frequency", fontsize=24)
+    ax.set_xlim([-0.15,2])
+    # ax.set_ylim([0,5])
+    ax.legend(fontsize=20, loc=0)
+
+    utils.save_figure(fig, f"{ fig_path }/SASA_{ resid }.png")
     plt.close()
 
     return None
