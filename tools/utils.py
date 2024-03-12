@@ -6,10 +6,11 @@ import datetime
 import matplotlib.pyplot as plt
 import numpy as np
 
-def validate_path(path):
+def validate_path(path, warning=""):
     """Validate if a given path exists."""
     if not os.path.exists(path):
-        print(f"Error: The path '{path}' does not exist.")
+        print(f"Error: The path '{ path }' does not exist.")
+        print(warning)
         sys.exit(1)
 
 def create_path(path):
