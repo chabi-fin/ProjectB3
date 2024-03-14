@@ -137,6 +137,8 @@ def main(argv):
     #plot_rmsd(df, "open", fig_path)
     #plot_rmsd(df, "closed", fig_path)
     for col in df.columns:
+        if any(word in col for word in ["Points", "Unnamed", "Window", "Run"]):
+            continue
         plot_averages(df, col, fig_path)
     plot_windows(df, fig_path)
 
@@ -300,7 +302,7 @@ def get_sasas(u, path, sim_name, holo=False):
 
             # Calculate SASA with gmx sasa using a subprocess
             if holo:
-                gmx_ndx.extend(f" -n { p }/index.ndx")
+                gmx_ndx += f" -n { p }/index.ndx"
             subprocess.run(gmx_ndx, shell=True)
             subprocess.run(gmx_sasa, shell=True)
 
@@ -364,9 +366,10 @@ def plot_averages(df, col, path):
     print(col, min(ave_val), max(ave_val))
 
     if "SASA" in col:
+        print(col)
         d = ax.tricontourf(df[df["Run"] == 1]["OpenPoints"], 
-                    df[df["Run"] == 1]["ClosedPoints"], ave_salt, 10,
-                    cmap="coolwarm",  vmin=1, vmax=25)
+                    df[df["Run"] == 1]["ClosedPoints"], ave_val, 10,
+                    cmap="coolwarm")
         # Colormap settings
         cbar = plt.colorbar(d)
         cbar.set_label(f"{ col } " + r"(nm$^2$)", fontsize=28, 
@@ -374,7 +377,7 @@ def plot_averages(df, col, path):
 
     else: 
         d = ax.tricontourf(df[df["Run"] == 1]["OpenPoints"], 
-                    df[df["Run"] == 1]["ClosedPoints"], ave_salt, 10,
+                    df[df["Run"] == 1]["ClosedPoints"], ave_val, 10,
                     cmap="coolwarm")
 
         # Colormap settings

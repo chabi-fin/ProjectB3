@@ -313,7 +313,6 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
         utils.save_figure(fig, f"{ fig_path }/2dfes_bs_{ state }.png")
     else:
         utils.save_figure(fig, f"{ fig_path }/2dfes_{ state }.png")
-    plt.show()
 
     plt.close()
 

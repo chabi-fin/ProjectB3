@@ -131,6 +131,8 @@ def main(argv):
     traj_paths, top_paths = sim_data_paths(data_paths, topols, xtc, 
                                            alphafold=alphafold)
 
+    print("traj-paths", traj_paths)
+
     # Find the closest sampled structure for each point in df_pts
     if state == "salt_bridge":
         df_pts = find_nearest_sb(df_pts, df_cat)
@@ -326,7 +328,7 @@ def sim_data_paths(data_paths, topols, xtc, alphafold):
             tops[f"af {i}"] = f"{ af_path }/af{i}/nobackup/{ af_top }"
     for p, top in zip(data_paths, topols):
         print("\n", p, "\n")
-        n = p.split("/")[-2]
+        n = p.split("/")[-3]
         traj_paths[n] = f"{ p }/{ xtc }"
         top_paths[n] = f"{ p }/{ top }"
     
