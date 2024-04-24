@@ -11,6 +11,7 @@ sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 import config.settings as cf
 from tools import utils, traj_funcs
 import subprocess
+import seaborn as sns
 
 def main(argv):
 
@@ -22,7 +23,7 @@ def main(argv):
                             dest = "state",
                             default = "apo",
                             help = ("Chose the type of simulation i.e. 'unbiased'",
-                                "or 'mutation'."))
+                                "or 'mutation' or 'tcda'."))
         
         args = parser.parse_args()
 
@@ -30,32 +31,43 @@ def main(argv):
         print("Command line arguments are ill-defined, please check the arguments")
         raise
 
-    global styles, fig_path
+    global styles, fig_path, state_name
 
     # Assign group selection from argparse
-    state = args.state
+    state_name = args.state
     
     # Set up some path variables for state 'unbiased' or 'mutation'
-    if state == "unbiased":
-        fig_path = f"{ cf.figure_head }/unbiased_sims/combo_{ state }"
+    if state_name == "unbiased":
+        fig_path = f"{ cf.figure_head }/unbiased_sims/combo_{ state_name }"
         state_paths = {
             "apo-open" : f"{ cf.data_head }/unbiased_sims/apo_open/analysis", 
             "apo-closed" : f"{ cf.data_head }/unbiased_sims/apo_closed/analysis",
             "holo-open" : f"{ cf.data_head }/unbiased_sims/holo_open/analysis",
             "holo-closed" : f"{ cf.data_head }/unbiased_sims/holo_closed/analysis"}
-    elif state == "mutation":
-        fig_path = f"{ cf.figure_head }/mutation/combo_{ state }"
+    elif state_name == "mutation":
+        fig_path = f"{ cf.figure_head }/mutation/combo_{ state_name }"
         state_paths = {
             "K57G" : f"{ cf.data_head }/unbiased_sims/mutation/K57G/analysis", 
             "E200G" : f"{ cf.data_head }/unbiased_sims/mutation/E200G/analysis",
             "double-mut" : f"{ cf.data_head }/unbiased_sims/mutation/double_mut/analysis"}
+    elif state_name == "tcda":
+        fig_path = f"{ cf.figure_head }/tcda/combo_{ state_name }"
+        state_paths = {
+            "TcdA-apo-open" : f"{ cf.data_head }/tcda/open_apo/analysis", 
+            "TcdA-apo-closed" : f"{ cf.data_head }/tcda/closed_apo/analysis",
+            "TcdA-holo-open" : f"{ cf.data_head }/tcda/open_holo/analysis", 
+            "TcdA-holo-closed" : f"{ cf.data_head }/tcda/closed_holo/analysis"
+            } 
     utils.create_path(fig_path)
 
     states = [State(name, path) for name, path in state_paths.items()]
 
     # A list of tuples for selection strings of the contacts of interest
     # and a dictionary for styles related to consistent plotting
-    selections = cf.selections
+    if "tcda" in state_name:
+        selections = cf.selections_tcda
+    else:
+        selections = cf.selections
     styles = cf.styles
 
     # Add data into the State objects
@@ -67,12 +79,14 @@ def main(argv):
         # Get arrays for the contacts of interest
         get_dist_arrs(state, selections)
 
-        # Load in SASA data computed with gmx sasa
-        get_sasa(state, 218)
-        get_sasa(state, 200)
-        get_sasa(state, 57)
-        get_sasa(state, 214)
-
+        # # Load in SASA data computed with gmx sasa
+        if "tcda" in state_name:
+            for i in [221,203,60,217]:
+                get_sasa(state, i)
+        else:
+            for i in [218, 200, 57, 214]:
+                get_sasa(state, i)
+                
     # Make plots for time series
     # stride = 50
     # plot_rmsf(states)
@@ -81,16 +95,25 @@ def main(argv):
 
     # plot_salt_bridges(states, stride=stride)
     # plot_hbonds(states, stride=stride)
-     
-    # # Make histograms of the contact distances
+    
+    # Set style for paper format 
+    sns.set_context("paper") 
+
+    # Make histograms of the contact distances
     for contact in selections.keys():
-        plot_hist(states, contact)
+       plot_hist(states, contact)
+       plot_hist(states, contact, legend=False)
 
     # Make histograms of the SASA for W218 and E200
-    plot_sasa(states, 218, "TYR")
-    plot_sasa(states, 200, "GLU")
-    plot_sasa(states, 57, "LYS")
-    plot_sasa(states, 214, "HIS")
+    if "tcda" in state_name:
+        for i,j in [(221,"W"),(203,"E"),(60,"K"),(217,"H")]:
+            plot_sasa(states, i, j)
+            plot_sasa(states, i , j, legend=False)
+    else:
+        for i,j in [(218,"W"),(200,"E"),(57,"K"),(214,"H")]:
+            plot_sasa(states, i, j)
+            plot_sasa(states, i , j, legend=False)
+
 
     return None
 
@@ -210,17 +233,18 @@ def get_contacts(state, selections):
     from MDAnalysis.analysis.distances import distance_array
 
     for key, select in selections.items():
+        print(key)
 
         # Skip over inapplicable selections
         if ("IP6" in key) & ("holo" not in state.name):
             continue
-        if ("K57" in key) & ("K57G" in state.name):
+        if ("K600" in key) & ("K57G" in state.name):
             continue
-        if ("K57" in key) & ("double-mut" in state.name):
+        if ("K600" in key) & ("double-mut" in state.name):
             continue
-        if ("E200" in key) & ("E200G" in state.name):
+        if ("E743" in key) & ("E200G" in state.name):
             continue   
-        if ("E200" in key) & ("double-mut" in state.name):
+        if ("E743" in key) & ("double-mut" in state.name):
             continue
 
         # Define the distance using the tuple of selection strings
@@ -323,7 +347,7 @@ def plot_rmsf(states):
     None.
 
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,1.25))
 
     for i, c in enumerate(states):
 
@@ -375,7 +399,7 @@ def plot_rmsd_time(states, stride=1):
     None. 
 
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,1.25))
 
     colors = {"open" : "#EAAFCC", "closed" : "#A1DEA1"}
     linestyles = {"holo" : "-", "apo" : "--"}
@@ -428,7 +452,7 @@ def plot_salt_bridges(states, stride=1):
 
     """
 
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,6))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,1.25))
 
     for i, c in enumerate(states):
         
@@ -475,7 +499,7 @@ def plot_hbonds(states, stride=1):
 
     """
 
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,6))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,1.25))
 
     for i, c in enumerate(states):
         
@@ -522,7 +546,7 @@ def plot_rgyr(states, stride=1):
 
     """
 
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(12,4))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(6*cm,2*cm))
 
     for i, c in enumerate(states):
 
@@ -545,9 +569,9 @@ def plot_rgyr(states, stride=1):
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"Time ($\mu s$)", labelpad=5, fontsize=24)
-    ax.set_ylabel(r"$R_G$ ($\AA$)", labelpad=20, fontsize=24)
-    plt.legend(fontsize=20)
+    ax.set_xlabel(r"Time ($\mu s$)")
+    ax.set_ylabel(r"$R_G$ ($\AA$)")
+    plt.legend()
     y_min, ymax = ax.get_ylim()
     ax.set_ylim(y_min-0.2,ymax+0.5)
 
@@ -556,7 +580,7 @@ def plot_rgyr(states, stride=1):
 
     return None
 
-def plot_hist(states, contact, bins=15, fs=24, **kwargs):
+def plot_hist(states, contact, bins=15, legend=True, **kwargs):
     """Makes a histogram plot of the contact all the State objects.
 
     Parameters
@@ -574,7 +598,7 @@ def plot_hist(states, contact, bins=15, fs=24, **kwargs):
     None.
 
     """
-    fig, ax = plt.subplots(figsize=(8,4))
+    fig, ax = plt.subplots(figsize=(2.5,1.25))
     
     for state in states:
 
@@ -594,22 +618,30 @@ def plot_hist(states, contact, bins=15, fs=24, **kwargs):
 
         dist = state.get_array(contact)
         ax.hist(dist, bins=bins, density=True, color=styles[key][0], 
-                ls=styles[key][1], lw=6, histtype='step', label=key)
+                ls=styles[key][1], histtype='step', lw=2, label=key)
     
     # Plot settings
-    ax.set_xlabel(f"Distance { contact } " + r"($\AA$)", fontsize=fs)
-    ax.set_ylabel("Relative frequency", fontsize=fs)
+    ax.tick_params(axis='both', which='major', pad=3)
+    ax.set_xlabel(f"Distance { contact } " + r"($\AA$)", labelpad=3)
+    ax.set_ylabel("Frequency", labelpad=3)
     if "xlim" in kwargs:
         plt.xlim(kwargs["xlim"])
-    plt.legend(fontsize=20)
+    if legend:
+        plt.legend(ncols=1, fontsize=6)
 
-    utils.save_figure(fig, f"{ fig_path }/{ contact }.png")
+    if legend:
+        utils.save_figure(fig, f"{ fig_path }/{ contact }.png")
+    else: 
+        no_legend_path = f"{ fig_path }/no_legend"
+        utils.create_path(no_legend_path)
+        utils.save_figure(fig, 
+            f"{ no_legend_path }/{ contact }.png")
     plt.close()
 
     return None
 
-def plot_sasa(states, resid, res_type):
-    """Makes a histogram plot of the W218 SASA data.
+def plot_sasa(states, resid, res_type, legend=True,):
+    """Makes a histogram plot of the residue SASA data.
 
     Parameters
     ----------
@@ -626,7 +658,11 @@ def plot_sasa(states, resid, res_type):
     None.
 
     """
-    fig, ax = plt.subplots(figsize=(8,4))
+    fig, ax = plt.subplots(figsize=(2.5,1.25))
+    if "tcda" in state_name:
+        toxinnum_resid = resid + 541
+    else: 
+        toxinnum_resid = resid + 543
 
     # Add reference data as vertical lines
     if resid == 218:
@@ -648,13 +684,21 @@ def plot_sasa(states, resid, res_type):
                 histtype='step', label=key)
     
     # Plot settings
-    ax.set_xlabel(f"SASA of { res_type } { resid } (nm²)", fontsize=24)
-    ax.set_ylabel("Relative frequency", fontsize=24)
+    ax.tick_params(axis='both', which='major', pad=3)
+    ax.set_xlabel(f"SASA of { res_type } { toxinnum_resid } (nm²)", 
+        labelpad=3)
+    ax.set_ylabel("Frequency", labelpad=3)
     ax.set_xlim([-0.15,2])
-    # ax.set_ylim([0,5])
-    ax.legend(fontsize=20, loc=0)
+    if legend:
+        plt.legend(ncols=1, fontsize=8)
+        utils.save_figure(fig, 
+            f"{ fig_path }/SASA_{ toxinnum_resid }.png")
+    else: 
+        no_legend_path = f"{ fig_path }/no_legend"
+        utils.create_path(no_legend_path)
+        utils.save_figure(fig, 
+            f"{ no_legend_path }/SASA_{ toxinnum_resid }.png")
 
-    utils.save_figure(fig, f"{ fig_path }/SASA_{ resid }.png")
     plt.close()
 
     return None
