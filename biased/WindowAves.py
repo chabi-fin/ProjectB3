@@ -12,6 +12,8 @@ sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 import config.settings as config
 from tools import utils, traj_funcs
 import matplotlib.colors as mcolors
+import seaborn as sns
+import re
 
 def main(argv):
 
@@ -130,8 +132,11 @@ def main(argv):
         df = pd.read_csv(f"{ home }/windows_averages.csv")
 
     print(df.columns)
-    print("Min:", np.min(df), "\nMax:", 
-        np.max(df))
+    # print("Min:", np.min(df), "\nMax:", 
+    #     np.max(df))
+
+    # Set style for paper format 
+    sns.set_context("paper") 
 
     #plot_Rgyr(df, fig_path)
     #plot_rmsd(df, "open", fig_path)
@@ -268,8 +273,8 @@ def get_sasas(u, path, sim_name, holo=False):
     """
     import subprocess
     # A dictionary for the residues this interesting SASA data
-    resids_water = {"TRP 218 SASA" : 218, "LYS 57 SASA" : 57, 
-        "GLU 200 SASA" : 200}
+    resids_water = {"TRP 761 SASA" : 218, "LYS 600 SASA" : 57, 
+        "GLU 743 SASA" : 200}
 
     ave_sasas = {}
 
@@ -316,7 +321,7 @@ def get_sasas(u, path, sim_name, holo=False):
 
         # Get the window average into a dictionary
         ave_sasa = np.mean(sasa_data, axis=0)
-        print(f"Average { key } SASA for { sim_name }: \n\t{ ave_sasa }")
+        print(f"Average { key } for { sim_name }: \n\t{ ave_sasa }")
         ave_sasas[key] = ave_sasa
 
     return ave_sasas
@@ -360,10 +365,17 @@ def plot_rmsd(df, ref_state, path):
     plt.close()
 
 def plot_averages(df, col, path):
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(10,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,2))
 
     ave_val = df.groupby('Window')[col].mean().values
-    print(col, min(ave_val), max(ave_val))
+    #print(col, min(ave_val), max(ave_val))
+
+    # Fix the col name to add 543 to resnums
+    def add_543(match):
+        num = int(match.group())
+        return str(num + 543)
+    col = re.sub(r'(?<!IP6)(\d+)', add_543, col)
+    #col = col.replace("--", "-")
 
     if "SASA" in col:
         print(col)
@@ -372,8 +384,7 @@ def plot_averages(df, col, path):
                     cmap="coolwarm")
         # Colormap settings
         cbar = plt.colorbar(d)
-        cbar.set_label(f"{ col } " + r"(nm$^2$)", fontsize=28, 
-            labelpad=10)
+        cbar.set_label(f"{ col } " + r"(nm$^2$)", labelpad=3, fontsize=8)
 
     else: 
         d = ax.tricontourf(df[df["Run"] == 1]["OpenPoints"], 
@@ -381,13 +392,20 @@ def plot_averages(df, col, path):
                     cmap="coolwarm")
 
         # Colormap settings
-        cbar = plt.colorbar(d, ticks=np.arange(1, 25.1, 4), extend="both")
-        cbar.set_label(f"Distance { col } " + r"($\AA$)", fontsize=28, 
-            labelpad=10)
+        cbar = plt.colorbar(d) # , ticks=np.arange(1, 25.1, 4), extend="both")
+        cbar.set_label(f"Distance { col } " + r"($\AA$)", labelpad=3,
+            fontsize=8)
 
-    # Add labels etc. 
-    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", fontsize=28)
-    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", fontsize=28)
+    # Add axes labels, tick positions 
+    plt.xticks([0, 2, 4, 6])
+    plt.yticks([0, 2, 4, 6])
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=3)
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=3)
+    ax.set_xlim(0,6)
+    ax.set_ylim(0,6)
+    ax.set_aspect('equal', adjustable='box')
+    cbar.ax.tick_params(labelsize=6)
+    cbar.outline.set_linewidth(1)
 
     plt.savefig(f"{ path }/window_ave_{ col }.png", dpi=300)
     plt.close()
