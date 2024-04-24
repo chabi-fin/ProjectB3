@@ -9,7 +9,7 @@ from MDAnalysis.analysis.distances import distance_array
 import pandas as pd
 sys.path.insert(0, "/home/lf1071fu/project_b3/ProjectB3")
 from tools import utils, traj_funcs
-import config.settings as c
+import config.settings as cf
 from tools import utils, traj_funcs
 
 def main(argv):
@@ -78,7 +78,7 @@ def main(argv):
     	raise
 
     global recalc, restrain, vec_closed, vec_open, beta_vec_path
-    global conform, state, ref_state
+    global conform, state, ref_state, styles, alphafold
 
     # Assign booleans from argparse
     recalc = args.recalc
@@ -88,13 +88,13 @@ def main(argv):
     state = args.state
     xtc = args.xtc
     alphafold = args.alphafold
-    data_paths = [f"{ c.data_head }/{ p }" for p in args.paths]
+    data_paths = [f"{ cf.data_head }/{ p }" for p in args.paths]
 
-    fig_path = f"{ c.figure_head }/unbiased_sims/rxn_coord"
-    struct_path = c.struct_head
+    fig_path = f"{ cf.figure_head }/unbiased_sims/rxn_coord"
+    struct_path = cf.struct_head
     beta_vec_path = ("/home/lf1071fu/project_b3/simulate/"
                      "umbrella/holo_state")
-    data_head = c.data_head
+    data_head = cf.data_head
     sim_paths = {
         "apo-open" : f"{ data_head }/unbiased_sims/apo_open/nobackup",
         "apo-closed" : f"{ data_head }/unbiased_sims/apo_closed/nobackup",
@@ -108,6 +108,12 @@ def main(argv):
 
     # Get the reference beta vectors
     ref_state, vec_open, vec_closed = get_ref_vecs(struct_path)
+    
+    if "tcda" in state:
+        selections = cf.selections_tcda
+    else:
+        selections = cf.selections
+    styles = cf.styles
 
     # Make a list of trajectory paths
     trajs = {}
@@ -164,17 +170,17 @@ def get_ref_vecs(struct_path):
     # Determine open + closed reference beta flap vectors in units of 
     # Angstrom
     r1_open = open_ref.select_atoms(
-                                    f"name CA and resnum { c.r1 }"
+                                    f"name CA and resnum { cf.r1 }"
                                     ).positions[0]
     r2_open = open_ref.select_atoms(
-                                    f"name CA and resnum { c.r2 }"
+                                    f"name CA and resnum { cf.r2 }"
                                     ).positions[0]
     vec_open = r2_open/10 - r1_open/10
     r1_closed = closed_ref.select_atoms(
-                                        f"name CA and resnum { c.r1 }"
+                                        f"name CA and resnum { cf.r1 }"
                                         ).positions[0]
     r2_closed = closed_ref.select_atoms(
-                                        f"name CA and resnum { c.r2 }"
+                                        f"name CA and resnum { cf.r2 }"
                                         ).positions[0]
     vec_closed = r2_closed/10 - r1_closed/10
     
@@ -290,7 +296,7 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
     
     """
     # Plot the two products over the traj
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(8,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,2.5))
 
     colors = {"af 1" : "#FFD700", "af 2" : "#FFA07A", "af 3" : "#4682B4", 
         "af 4" : "#8A2BE2", "af 5" : "#FFD700", "af 6" : "#20B2AA",
@@ -304,8 +310,8 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
 
         labels = {"apo_open" : "apo-open", "apo_closed" : "apo-closed", 
                   "holo_open" : "holo-open", "holo_closed" : "holo-closed",
-                  "K57G" : "K57G", "double_mut" : "K57G + E200G", 
-                  "E200G" : "E200G", "af 1" : "af 1", "af 2" : "af 2",
+                  "K57G" : "K600G", "double_mut" : "K600G/E743G", 
+                  "E200G" : "E743G", "af 1" : "af 1", "af 2" : "af 2",
                   "af 3" : "af 3", "af 4" : "af 4", "af 6" : "af 5",
                   "af 7" : "af 6", "af 8" : "af 7", "af 9" : "af 8"}
         
@@ -329,52 +335,52 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
 
             ax.scatter(traj_df["angle-open"], traj_df["angle-closed"], 
                         label=get_label(t), alpha=1, marker="o", 
-                        color=colors[t], s=150)       
+                        color=colors[t], s=10)       
 
         else:
 
             ax.scatter(traj_df["dot-open"], traj_df["dot-closed"], 
-                        label=get_label(t), alpha=1, marker="o", s=150, 
+                        label=get_label(t), alpha=1, marker="o", s=10, 
                         color=colors[t])
 
     # Add in reference positions
     if angles_coord: 
         ax.scatter(calc_theta(vec_open, vec_open), 
                    calc_theta(vec_open, vec_closed), label="Closed ref.", 
-                   marker="X", color=c.closed_color, edgecolors="#404040", 
-                   s=550,lw=3)
+                   marker="X", color=cf.closed_color, edgecolors="#404040", 
+                   s=10, lw=2)
         ax.scatter(calc_theta(vec_open, vec_closed), 0, label="Open ref.", 
-                marker="X", color=c.open_color, edgecolors="#404040", s=550, lw=3)
+                   marker="X", color=cf.open_color, edgecolors="#404040", s=10, 
+                   lw=2)
 
     else: 
         ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), 
-                   label="Open ref.", marker="X", color=c.closed_color, 
-                   edgecolors="#404040", s=550, lw=3)
+                   label="Open ref.", marker="X", color=cf.closed_color, 
+                   edgecolors="#404040", s=50, lw=1)
         ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), 
-                   label="Closed ref.", marker="X", color=c.open_color, 
-                   edgecolors="#404040", s=550, lw=3)
+                   label="Closed ref.", marker="X", color=cf.open_color, 
+                   edgecolors="#404040", s=50, lw=1)
 
         # Add restraint points
         if restrain:
             ax.scatter(restraints[:,0], restraints[:,1], label="Restrain at", 
                     marker="o", color="#949494", edgecolors="#EAEAEA", lw=3, 
-                    s=150)
+                    s=20)
 
     # Plot settings
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    for i in ["top","bottom","left","right"]:
-        ax.spines[i].set_linewidth(2)
-    ax.grid(True)
+    ax.tick_params(axis='both', which='major', pad=3)
+    plt.xticks([0, 2, 4, 6])
+    plt.yticks([0, 2, 4, 6])
     if angles_coord:
-        ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5)
+        ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5)
     else:
-        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
-    plt.legend(fontsize=18, ncol=2)
+        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=3, fontsize=8)
+        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=3, fontsize=8)
+    if alphafold:
+        plt.legend(fontsize=6, ncol=2, loc=3)
+    else:
+        plt.legend(fontsize=6, ncol=1, loc=3)
     ax.set_xlim(0,6)
     ax.set_ylim(0,6)
 
@@ -385,7 +391,7 @@ def plot_rxn_coord(df, fig_path, restraints=False, angles_coord=False,
     else:
         utils.save_figure(fig, f"{ fig_path }/beta_vec_{ state }.png")
 
-    plt.show()
+    #plt.show()
     plt.close()
 
     return None
