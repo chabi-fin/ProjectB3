@@ -19,7 +19,7 @@ def main(argv):
         parser.add_argument("-p", "--path",
                             action = "store",
                             nargs='+',
-                            dest = "path",
+                            dest = "paths",
                             default = [
                                 "unbiased_sims/holo_open/nobackup",
                                 ("unbiased_sims/holo_closed/nobackup")],
@@ -44,7 +44,7 @@ def main(argv):
         raise
 
     # Assign group selection from argparse
-    data_paths = [f"{ c.data_head }/{ p }" for p in args.path]
+    data_paths = [f"{ c.data_head }/{ p }" for p in args.paths]
     fig_path = f"{ c.figure_head }/{ args.fig_path }"
     recalc = args.recalc
 
@@ -114,12 +114,13 @@ def get_datas(data_paths, recalc):
             )
 
             # Get topol file or edit base topology
-            topol = f"{ path }/topol_Pro_Lig.top"#
+            topol = "topol_Pro_Lig.top"
             utils.process_topol(path, topol)
 
             # Load in universe objects for the simulation and the 
             # reference structures
-            u = mda.Universe(topol, f"{ path }/fitted_traj_100.xtc",
+            u = mda.Universe(f"{ path }/{ topol }", 
+                            f"{ path }/fitted_traj_100.xtc",
                             topology_format='ITP')
 
             # Load in the trajectory and do alignment
@@ -207,6 +208,7 @@ def plot_coms(data_paths, datas, fig_path):
 
     # Save plot to file
     utils.save_figure(fig, f"{ fig_path }/com_dist.png")
+    plt.show()
     plt.close()
 
     return None
