@@ -86,6 +86,10 @@ def main(argv):
     open_state = mda.Universe(f"{ c.struct_head }/open_ref_state.pdb")
     closed_state = mda.Universe(f"{ c.struct_head }/closed_ref_state.pdb")
     
+    # For TcdA sims
+    if "tcda" in state:
+        tcda = True
+
     # Starting structure as the ref state
     ref_state = mda.Universe(f"{ c.struct_head }/alignment_struct.pdb")
 
@@ -181,13 +185,19 @@ def main(argv):
                 arrs["chi_1s"][:,r] = dihs.results.angles[:,0]
         utils.save_array(np_files["chi_1s"], arrs["chi_1s"])
         
-        # Salt-bridge contacts
-        arrs["sc"] = get_salt_contacts(u, ref_state)
-        arrs["salt_dist"] = get_bridges(u)
+        if tcda:
 
-        # Hydrogen bonds analysis (intramolecular, not with solvent)
-        arrs["hpairs"] = get_hbond_pairs(u)
-        # arrs["hbond_count"] = get_hbonds(u)
+            print("Skipping salt-bridge and hpair time series")
+
+        else: 
+
+            # Salt-bridge contacts
+            arrs["sc"] = get_salt_contacts(u, ref_state)
+            arrs["salt_dist"] = get_bridges(u)
+
+            # Hydrogen bonds analysis (intramolecular, not with solvent)
+            arrs["hpairs"] = get_hbond_pairs(u)
+            # arrs["hbond_count"] = get_hbonds(u)
 
     # Make plots for simulation analysis
     plot_rmsd(arrs["R_open"], arrs["R_closed"], arrs["time_ser"])
@@ -204,10 +214,11 @@ def main(argv):
         plot_ramachandran(arrs["rama"][:,i,0], arrs["rama"][:,i,1], res)
         plot_chi1(res, arrs["chi_1s"][:,i])
 
-    plot_salt_frac(arrs["sc"], arrs["time_ser"])
-    plot_bridges(arrs["salt_dist"], arrs["time_ser"])
-    plot_hbond_pairs(arrs["hpairs"], arrs["time_ser"])
-    # plot_hbonds_count(arrs["hbond_count"], arrs["time_ser"])
+    if not tcda:
+        plot_salt_frac(arrs["sc"], arrs["time_ser"])
+        plot_bridges(arrs["salt_dist"], arrs["time_ser"])
+        plot_hbond_pairs(arrs["hpairs"], arrs["time_ser"])
+        # plot_hbonds_count(arrs["hbond_count"], arrs["time_ser"])
 
     return None
 
@@ -595,9 +606,9 @@ def plot_rmsd(r_open, r_closed, time_ser):
     for i in ["top","bottom","left","right"]:
         ax.spines[i].set_linewidth(2)
     ax.grid(True)
-    ax.set_xlabel(r"RMSD to open state ($\AA$)", labelpad=5, \
+    ax.set_xlabel(r"RMSD to open conformation ($\AA$)", labelpad=5, \
                     fontsize=32)
-    ax.set_ylabel(r"RMSD to closed state ($\AA$)", labelpad=5, fontsize=32)
+    ax.set_ylabel(r"RMSD to closed conformation ($\AA$)", labelpad=5, fontsize=32)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
     ax.set_xlim(0,15)
