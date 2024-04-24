@@ -115,7 +115,7 @@ def main(argv):
     elif state == "apo":
         colvar_columns = ["time", "opendot", "closeddot", "theta1", 
             "theta2", "bias", "force"]
-    elif state == "apo_K57G": 
+    else: 
         colvar_columns = ["time", "opendot", "closeddot", "theta1", 
             "theta2", "bias", "force"]
             
@@ -215,7 +215,7 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     ave_sq : np.ndarray
 
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(10,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,2))
 
     # Get the relevant discretized arrays from table columns
     open_bins, closed_bins = fes.odot, fes.cdot 
@@ -234,12 +234,18 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     #z = fes
     # z, err = fes[mask], ferr[mask]
 
+    # Save plotted data as np array
+    combined_array = np.stack((x, y, z), axis=0)
+    print(combined_array)
+    print(combined_array.shape)
+    np.save(f"{ home }/fes_data_{ state }.npy", combined_array)
+
     closed_mask = z[y>3]
     open_mask = z[y<=3]
     print(f"MIN-closed: { np.min(closed_mask)}\nMIN-open: { np.min(open_mask)}")
     print(f"diff : {np.min(open_mask) - np.min(closed_mask)}")
 
-    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, 
+    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, s=1,
             norm=mcolors.Normalize(vmin=0, vmax=100))
 
     # if angle_coord:
@@ -262,17 +268,20 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     tri = Triangulation(x, y)
 
     # Create contour lines on the XY plane using tricontour
-    contours = ax.tricontour(tri, z, cmap="inferno", levels=6)
+    if "K57G" in state:
+        contours = ax.tricontour(tri, z, cmap="inferno", levels=[0,15,30,45,60,75,101,102])
+    else:
+        contours = ax.tricontour(tri, z, cmap="inferno", levels=6)
 
     # Colormap settings
     cbar = plt.colorbar(d, ticks=np.arange(0, 101, 20))
     # if angle_coord:
     #     cbar.set_label(r'$F(\theta_{open}, \theta_{closed})$ (kJ / mol)', fontsize=24, labelpad=10)
     # else: 
-    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=24, labelpad=10)
-    cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
-    cbar.outline.set_linewidth(2)
-    ax.clabel(contours, inline=1, fontsize=24)
+    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=8, labelpad=3)
+    cbar.ax.tick_params(labelsize=6)
+    cbar.outline.set_linewidth(1)
+    ax.clabel(contours, inline=1, fontsize=6)
 
     # Add both reference positions
     if angle_coord:
@@ -284,28 +293,27 @@ def plot_2dfes(fes, vec_open, vec_closed, fig_path, fsum=None,
     else:
         ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), 
                 label="Open ref.", marker="X", alpha=1, edgecolors="#404040", 
-                s=550, lw=3, color="#EAAFCC")
+                s=50, lw=1, color="#EAAFCC")
         ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), 
                 label="Closed ref.", marker="X", alpha=1, edgecolors="#404040", 
-                s=550, lw=3, color="#A1DEA1")
+                s=50, lw=1, color="#A1DEA1")
 
     # Plot parameters and axis labels
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
+    ax.tick_params(axis='both', which='major', pad=3)
+    plt.xticks([0, 2, 4, 6])
+    plt.yticks([0, 2, 4, 6])
     if angle_coord:
-        ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\theta_{open}$ (rad)", labelpad=3)
+        ax.set_ylabel(r"$\theta_{closed}$ (rad)", labelpad=3)
     else: 
-        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
-        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
+        ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=3)
+        ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=3)
     _, xmax = ax.get_xlim()
     _, ymax = ax.get_ylim()
     ax.set_xlim(0,xmax)
     ax.set_ylim(0,ymax)
     ax.set_aspect('equal', adjustable='box')
-    plt.legend(fontsize=24)
+    plt.legend(fontsize=6)
 
     if angle_coord:
         utils.save_figure(fig, f"{ fig_path }/2dfes_angles_{ state }.png")
@@ -331,7 +339,7 @@ def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
         Path for storing the figure. 
     
     """
-    fig, ax = plt.subplots(constrained_layout=True, figsize=(10,8))
+    fig, ax = plt.subplots(constrained_layout=True, figsize=(2.5,2))
 
     # Get the relevant discretized arrays from table columns
     open_bins, closed_bins = fes.odot, fes.cdot 
@@ -341,35 +349,38 @@ def plot_2derror(ferr, fes, vec_open, vec_closed, fig_path):
     x, y = open_bins[mask], closed_bins[mask]
     z = ferr[mask]
 
-    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, 
+    d = ax.scatter(x, y, c=z, cmap=plt.cm.viridis, s=1, 
             norm=mcolors.Normalize(vmin=0, vmax=1))
 
     # Colormap settings
-    cbar = plt.colorbar(d, ticks=np.arange(0, 1.2, 0.2))
-    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=28, labelpad=10)
-    cbar.ax.tick_params(labelsize=18, direction='out', width=2, length=5)
-    cbar.outline.set_linewidth(2)
+    cbar = plt.colorbar(d, ticks=np.arange(0, 1.2, 1/5))
+    cbar.set_label(r'$F(\xi_1, \xi_2)$ (kJ / mol)', fontsize=8, labelpad=3)
+    cbar.ax.tick_params(labelsize=6)
+    cbar.outline.set_linewidth(1)
 
     ax.scatter(np.dot(vec_open, vec_open), np.dot(vec_open, vec_closed), 
                 label="Open ref.", marker="X", alpha=1, edgecolors="#404040", 
-                s=550, lw=3, color="#EAAFCC")
+                s=50, lw=1, color="#EAAFCC")
     ax.scatter(np.dot(vec_open, vec_closed), np.dot(vec_closed, vec_closed), 
                 label="Closed ref.", marker="X", alpha=1, edgecolors="#404040", 
-                s=550, lw=3, color="#A1DEA1")
+                s=50, lw=1, color="#A1DEA1")
 
     # Plot parameters and axis labels
-    ax.tick_params(axis='y', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.tick_params(axis='x', labelsize=18, direction='in', width=2, \
-                    length=5, pad=10)
-    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=5, fontsize=24)
-    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=5, fontsize=24)
+    ax.tick_params(axis='both', which='major', pad=3)
+    plt.xticks([0, 2, 4, 6])
+    plt.yticks([0, 2, 4, 6]) 
+    ax.set_xlabel(r"$\xi_1$ (nm$^2$)", labelpad=3)
+    ax.set_ylabel(r"$\xi_2$ (nm$^2$)", labelpad=3)
     ax.set_xlim(0,6)
     ax.set_ylim(0,6)
     ax.set_aspect('equal', adjustable='box')
-    plt.legend(fontsize=24)
+    plt.legend(fontsize=6)
 
     utils.save_figure(fig, f"{ fig_path }/2dfes_error_{ state }.png")
+
+    plt.close()
+
+    return None
 
 def get_ref_vecs(struct_path, core, ref_state):
     """Calculates the beta-vectors for the reference structures.
